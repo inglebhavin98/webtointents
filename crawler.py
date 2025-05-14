@@ -133,12 +133,13 @@ class WebsiteCrawler:
         from selenium.webdriver.support import expected_conditions as EC
         from selenium.webdriver.common.by import By
         from selenium.common.exceptions import TimeoutException, WebDriverException
+        import time
         
         for attempt in range(max_retries):
             try:
                 # Configure Chrome options
                 self.chrome_options = Options()  # Reset options
-                self.chrome_options.add_argument('--headless')
+                self.chrome_options.add_argument('--headless=new')  # Using new headless mode
                 self.chrome_options.add_argument('--no-sandbox')
                 self.chrome_options.add_argument('--disable-dev-shm-usage')
                 self.chrome_options.add_argument('--disable-gpu')
@@ -146,12 +147,22 @@ class WebsiteCrawler:
                 self.chrome_options.add_argument('--ignore-certificate-errors')
                 self.chrome_options.add_argument('--disable-extensions')
                 self.chrome_options.add_argument('--disable-popup-blocking')
-                self.chrome_options.add_argument('--max-redirects=10')  # Limit redirects
+                self.chrome_options.add_argument('--disable-software-rasterizer')
+                self.chrome_options.add_argument('--disable-setuid-sandbox')
+                self.chrome_options.add_argument('--disable-webgl')
+                self.chrome_options.add_argument('--disable-notifications')
+                
+                # Add user agent
+                self.chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
                 
                 print(f"Attempt {attempt + 1}/{max_retries} for URL: {url}")
                 
-                with webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=self.chrome_options) as driver:
-                    driver.set_page_load_timeout(20)  # Reduce timeout to catch issues faster
+                print(f"Attempt {attempt + 1}: Setting up Chrome driver...")
+                service = Service(ChromeDriverManager().install())
+                driver = webdriver.Chrome(service=service, options=self.chrome_options)
+                try:
+                    driver.set_page_load_timeout(30)  # Increased timeout
+                    time.sleep(2)  # Small delay to ensure driver is ready
                     
                     try:
                         print(f"Loading page: {url}")
@@ -204,5 +215,17 @@ class WebsiteCrawler:
                     }
                 }
             except Exception as e:
-                print(f"Error crawling {url}: {e}")
-                return None
+                print(f"Error crawling {url} (attempt {attempt + 1}): {str(e)}")
+                try:
+                    driver.quit()
+                except:
+                    pass
+                if attempt == max_retries - 1:
+                    return None
+                time.sleep(2)  # Wait before retry
+                continue
+            finally:
+                try:
+                    driver.quit()
+                except:
+                    pass
