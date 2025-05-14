@@ -75,10 +75,36 @@ class WebsiteCrawler:
                 # Extract links
                 links = [urljoin(url, a.get('href')) for a in soup.find_all('a', href=True)]
                 
+                # Extract title and headers
+                title = soup.title.string if soup.title else ''
+                headers = {
+                    'h1': [h.get_text() for h in soup.find_all('h1')],
+                    'h2': [h.get_text() for h in soup.find_all('h2')],
+                    'h3': [h.get_text() for h in soup.find_all('h3')]
+                }
+                
+                # Parse domain
+                domain = urlparse(url).netloc
+                
+                # Extract meta description
+                meta_desc = soup.find('meta', attrs={'name': 'description'})
+                description = meta_desc['content'] if meta_desc else ''
+                
                 return {
                     'url': url,
-                    'content': text_content,
-                    'links': links
+                    'domain': domain,
+                    'metadata': {
+                        'title': title,
+                        'description': description
+                    },
+                    'structure': {
+                        'headers': headers,
+                        'main_content': text_content
+                    },
+                    'navigation': {
+                        'internal_links': [link for link in links if urlparse(link).netloc == domain],
+                        'external_links': [link for link in links if urlparse(link).netloc != domain]
+                    }
                 }
         except Exception as e:
             print(f"Error crawling {url}: {e}")
