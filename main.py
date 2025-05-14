@@ -1,94 +1,76 @@
-
 import streamlit as st
 from crawler import WebsiteCrawler
 from storage import StorageHandler
 import json
+import os
 
 def main():
     st.title("Intent Mapper")
-    
+
     # Initialize crawler and storage
     if 'crawler' not in st.session_state:
         st.session_state.crawler = WebsiteCrawler()
         st.session_state.storage = StorageHandler()
-    
+
     # Input for base URL
     base_url = st.text_input("Enter Base URL", placeholder="https://example.com")
-    
-    # Start crawl button
-    if st.button("Start Crawl and Process"):
+
+    # First phase: Create sitemap
+    if st.button("Create Sitemap"):
         if base_url:
-            st.info("Starting crawl process...")
-            
-            # Create progress bar
+            with st.spinner("Creating sitemap..."):
+                sitemap_path, urls = st.session_state.crawler.create_sitemap(base_url)
+                st.session_state.urls = urls
+                st.success(f"Sitemap created with {len(urls)} URLs!")
+
+                if os.path.exists(sitemap_path):
+                    with open(sitemap_path, 'r') as f:
+                        st.download_button(
+                            "Download Sitemap",
+                            f.read(),
+                            file_name="sitemap.xml",
+                            mime="application/xml"
+                        )
+
+    # Second phase: Crawl and process
+    if hasattr(st.session_state, 'urls'):
+        st.subheader("Website Structure")
+        st.write(f"Found {len(st.session_state.urls)} URLs")
+
+        if st.button("Start Crawling"):
+            results = []
             progress_bar = st.progress(0)
-            
-            try:
-                # Parse sitemap
-                st.write("📍 Parsing sitemap...")
-                urls = st.session_state.crawler.parse_sitemap(base_url)
-                
-                if not urls:
-                    st.warning("No URLs found in sitemap. Crawling base URL...")
-                    urls = [base_url]
-                
-                # Crawl URLs
-                results = []
-                for i, url in enumerate(urls):
-                    st.write(f"🔍 Crawling: {url}")
-                    result = st.session_state.crawler.crawl_url(url)
-                    if result:
-                        results.append(result)
-                    progress_bar.progress((i + 1) / len(urls))
-                
-                # Store results in session state and persistent storage
+
+            for i, url in enumerate(st.session_state.urls):
+                st.write(f"🔍 Crawling: {url}")
+                result = st.session_state.crawler.crawl_url(url)
+                if result:
+                    results.append(result)
+                progress_bar.progress((i + 1) / len(st.session_state.urls))
+
+            if results:
                 st.session_state.crawl_results = results
-                st.session_state.show_results = True
-                
-                # Save to storage
-                if results:
-                    filename = st.session_state.storage.save_crawl_results(results, base_url)
-                    st.success(f"Completed crawling {len(results)} pages! Saved as {filename}")
-                    
-                    # Show previous crawls
-                    st.subheader("Previous Crawls")
-                    crawls = st.session_state.storage.list_crawls()
-                    for crawl in crawls[:5]:  # Show last 5 crawls
-                        st.text(crawl)
-                
-            except Exception as e:
-                st.error(f"Error during crawling: {e}")
-        else:
-            st.warning("Please enter a base URL")
-    
-    # Results section
-    if st.session_state.get('show_results', False):
-        st.subheader("Intent Hierarchy Viewer")
-        
-        if 'crawl_results' in st.session_state:
-            # Show sample of crawled data
-            st.json(st.session_state.crawl_results[0] if st.session_state.crawl_results else {})
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                st.download_button(
-                    "Download Intents JSON",
-                    data=json.dumps(st.session_state.crawl_results, indent=2),
-                    file_name="intents.json",
-                    mime="application/json"
-                )
-            with col2:
-                # Create CSV string
-                csv_data = "url,content\n"
-                for result in st.session_state.crawl_results:
-                    csv_data += f"{result['url']},{result['content'][:100].replace(',', ' ')}\n"
-                
-                st.download_button(
-                    "Download Intents CSV",
-                    data=csv_data,
-                    file_name="intents.csv",
-                    mime="text/csv"
-                )
+                filename = st.session_state.storage.save_crawl_results(results, base_url)
+                st.success(f"Completed crawling {len(results)} pages! Saved as {filename}")
+
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.download_button(
+                        "Download Results (JSON)",
+                        data=json.dumps(results, indent=2),
+                        file_name="results.json",
+                        mime="application/json"
+                    )
+                with col2:
+                    csv_data = "url,title,description\n"
+                    for result in results:
+                        csv_data += f"{result['url']},{result['metadata']['title']},{result['metadata']['description']}\n"
+                    st.download_button(
+                        "Download Results (CSV)",
+                        data=csv_data,
+                        file_name="results.csv",
+                        mime="text/csv"
+                    )
 
 if __name__ == "__main__":
     main()
