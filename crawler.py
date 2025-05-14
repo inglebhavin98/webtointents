@@ -63,14 +63,21 @@ class WebsiteCrawler:
         visited = set()
         to_visit = {base_url}
         domain = urlparse(base_url).netloc
-
+        
+        # Configure requests session with proper headers and redirect handling
+        session = requests.Session()
+        session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        })
+        
         while to_visit:
             url = to_visit.pop()
             if url in visited:
                 continue
 
             try:
-                response = requests.get(url)
+                print(f"Checking URL: {url}")
+                response = session.get(url, timeout=30, allow_redirects=True, verify=False)
                 if response.status_code == 200:
                     visited.add(url)
                     soup = BeautifulSoup(response.content, 'html.parser')
@@ -109,24 +116,51 @@ class WebsiteCrawler:
             return self.generate_sitemap(base_url)
 
     def crawl_url(self, url, max_retries=3):
+        from selenium.webdriver.support.ui import WebDriverWait
+        from selenium.webdriver.support import expected_conditions as EC
+        from selenium.webdriver.common.by import By
+        from selenium.common.exceptions import TimeoutException, WebDriverException
+        
         for attempt in range(max_retries):
             try:
+                # Configure Chrome options
+                self.chrome_options = Options()  # Reset options
+                self.chrome_options.add_argument('--headless')
+                self.chrome_options.add_argument('--no-sandbox')
+                self.chrome_options.add_argument('--disable-dev-shm-usage')
                 self.chrome_options.add_argument('--disable-gpu')
                 self.chrome_options.add_argument('--window-size=1920,1080')
                 self.chrome_options.add_argument('--ignore-certificate-errors')
+                self.chrome_options.add_argument('--disable-extensions')
+                self.chrome_options.add_argument('--disable-popup-blocking')
+                self.chrome_options.add_argument('--max-redirects=10')  # Limit redirects
+                
+                print(f"Attempt {attempt + 1}/{max_retries} for URL: {url}")
                 
                 with webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=self.chrome_options) as driver:
-                    driver.set_page_load_timeout(30)
-                    driver.get(url)
+                    driver.set_page_load_timeout(20)  # Reduce timeout to catch issues faster
                     
-                    from selenium.webdriver.support.ui import WebDriverWait
-                    from selenium.webdriver.support import expected_conditions as EC
-                    from selenium.webdriver.common.by import By
-                    
-                    # Wait for body with increased timeout
-                    WebDriverWait(driver, 20).until(
-                        EC.presence_of_element_located((By.TAG_NAME, "body"))
-                    )
+                    try:
+                        print(f"Loading page: {url}")
+                        driver.get(url)
+                    except TimeoutException:
+                        print(f"Timeout loading page: {url}")
+                        if attempt == max_retries - 1:
+                            raise
+                        continue
+                        
+                    try:
+                        # Wait for body with progressive timeouts
+                        timeout = 10 if attempt == 0 else 20
+                        print(f"Waiting for page body (timeout: {timeout}s)")
+                        WebDriverWait(driver, timeout).until(
+                            EC.presence_of_element_located((By.TAG_NAME, "body"))
+                        )
+                    except TimeoutException:
+                        print(f"Timeout waiting for body: {url}")
+                        if attempt == max_retries - 1:
+                            raise
+                        continue
                 
                 content = driver.page_source
                 soup = BeautifulSoup(content, 'html.parser')
