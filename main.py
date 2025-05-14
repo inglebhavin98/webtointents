@@ -54,21 +54,17 @@ def main():
             )
 
         if st.button("Start Crawl and Process"):
-            results = []
-            progress_bar = st.progress(0)
-            
-            for i, url in enumerate(st.session_state.selected_urls):
             if base_url:
                 st.info("Phase 1: Generating/Loading Sitemap...")
-
+                
                 # Create progress bars
                 sitemap_progress = st.progress(0)
                 crawl_progress = st.progress(0)
-
-            results = []
-            progress_bar = st.progress(0)
-
-            for i, url in enumerate(st.session_state.urls):
+                
+                results = []
+                progress_bar = st.progress(0)
+                
+                for i, url in enumerate(st.session_state.selected_urls):
                 st.write(f"🔍 Crawling: {url}")
                 result = st.session_state.crawler.crawl_url(url)
                 if result:
