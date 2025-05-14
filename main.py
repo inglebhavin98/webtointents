@@ -32,12 +32,32 @@ def main():
                             mime="application/xml"
                         )
 
-    # Second phase: Crawl and process
+    # Second phase: URL Selection and Crawling
     if hasattr(st.session_state, 'urls'):
         st.subheader("Website Structure")
         st.write(f"Found {len(st.session_state.urls)} URLs")
 
+        col1, col2 = st.columns([1, 3])
+        with col1:
+            select_all = st.checkbox("Select All", value=True)
+        
+        if 'selected_urls' not in st.session_state:
+            st.session_state.selected_urls = st.session_state.urls.copy()
+        
+        if select_all:
+            st.session_state.selected_urls = st.session_state.urls.copy()
+        else:
+            st.session_state.selected_urls = st.multiselect(
+                "Select URLs to crawl",
+                st.session_state.urls,
+                default=st.session_state.selected_urls
+            )
+
         if st.button("Start Crawl and Process"):
+            results = []
+            progress_bar = st.progress(0)
+            
+            for i, url in enumerate(st.session_state.selected_urls):
             if base_url:
                 st.info("Phase 1: Generating/Loading Sitemap...")
 
