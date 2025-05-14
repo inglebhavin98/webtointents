@@ -108,19 +108,25 @@ class WebsiteCrawler:
             print(f"Error parsing sitemap: {e}")
             return self.generate_sitemap(base_url)
 
-    def crawl_url(self, url):
-        try:
-            with webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=self.chrome_options) as driver:
-                driver.set_page_load_timeout(30)  # Set page load timeout
-                driver.get(url)
-                # Wait for the page to load
-                from selenium.webdriver.support.ui import WebDriverWait
-                from selenium.webdriver.support import expected_conditions as EC
-                from selenium.webdriver.common.by import By
+    def crawl_url(self, url, max_retries=3):
+        for attempt in range(max_retries):
+            try:
+                self.chrome_options.add_argument('--disable-gpu')
+                self.chrome_options.add_argument('--window-size=1920,1080')
+                self.chrome_options.add_argument('--ignore-certificate-errors')
                 
-                WebDriverWait(driver, 10).until(
-                    EC.presence_of_element_located((By.TAG_NAME, "body"))
-                )
+                with webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=self.chrome_options) as driver:
+                    driver.set_page_load_timeout(30)
+                    driver.get(url)
+                    
+                    from selenium.webdriver.support.ui import WebDriverWait
+                    from selenium.webdriver.support import expected_conditions as EC
+                    from selenium.webdriver.common.by import By
+                    
+                    # Wait for body with increased timeout
+                    WebDriverWait(driver, 20).until(
+                        EC.presence_of_element_located((By.TAG_NAME, "body"))
+                    )
                 
                 content = driver.page_source
                 soup = BeautifulSoup(content, 'html.parser')
