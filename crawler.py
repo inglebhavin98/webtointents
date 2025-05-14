@@ -136,44 +136,33 @@ class WebsiteCrawler:
 
     def crawl_url(self, url, max_retries=3):
         driver = None
-        try:
-            # First try with regular requests
-            print(f"Attempting direct request to: {url}")
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-            }
-            response = requests.get(url, headers=headers, verify=False, timeout=30)
-            content = response.text
-            if response.status_code == 200:
-                print("Direct request successful")
-                soup = BeautifulSoup(content, 'html.parser')
-                title = soup.title.string if soup.title else ''
-                headers = {
-                    'h1': [h.get_text() for h in soup.find_all('h1')],
-                    'h2': [h.get_text() for h in soup.find_all('h2')],
-                    'h3': [h.get_text() for h in soup.find_all('h3')]
-                }
+        for attempt in range(max_retries):
+            try:
+                print(f"Attempt {attempt + 1}/{max_retries} for URL: {url}")
 
-                text_content = ' '.join([p.get_text() for p in soup.find_all(['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'])])
-                domain = urlparse(url).netloc
+                self.chrome_options = Options()
+                self.chrome_options.add_argument('--headless=new')
+                self.chrome_options.add_argument('--no-sandbox')
+                self.chrome_options.add_argument('--disable-dev-shm-usage')
+                self.chrome_options.add_argument('--disable-gpu')
+                self.chrome_options.add_argument('--window-size=1920,1080')
+                self.chrome_options.add_argument('--ignore-certificate-errors')
+                self.chrome_options.add_argument('--disable-extensions')
+                self.chrome_options.add_argument('--disable-notifications')
+                self.chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
 
-                meta_desc = soup.find('meta', attrs={'name': 'description'})
-                description = meta_desc['content'] if meta_desc else ''
+                service = Service(ChromeDriverManager().install())
+                driver = webdriver.Chrome(service=service, options=self.chrome_options)
+                driver.set_page_load_timeout(30)
 
-                return {
-                    'url': url,
-                    'domain': domain,
-                    'metadata': {
-                        'title': title,
-                        'description': description
-                    },
-                    'structure': {
-                        'headers': headers,
-                        'main_content': text_content
-                    }
-                }
-        except Exception as e:
-            print(f"Direct request failed: {str(e)}, trying Selenium...")
+                print(f"Loading page: {url}")
+                driver.get(url)
+
+                WebDriverWait(driver, 20).until(
+                    EC.presence_of_element_located((By.TAG_NAME, "body"))
+                )
+
+                content = driver.page_source
                 soup = BeautifulSoup(content, 'html.parser')
 
                 title = soup.title.string if soup.title else ''
