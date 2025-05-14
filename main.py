@@ -37,7 +37,14 @@ def main():
         st.subheader("Website Structure")
         st.write(f"Found {len(st.session_state.urls)} URLs")
 
-        if st.button("Start Crawling"):
+        if st.button("Start Crawl and Process"):
+            if base_url:
+                st.info("Phase 1: Generating/Loading Sitemap...")
+
+                # Create progress bars
+                sitemap_progress = st.progress(0)
+                crawl_progress = st.progress(0)
+
             results = []
             progress_bar = st.progress(0)
 
