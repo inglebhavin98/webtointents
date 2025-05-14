@@ -1,0 +1,125 @@
+<AppSpec>
+  <AppName>Intent Discovery MVP</AppName>
+  <Description>
+    A web application for scraping websites, extracting structured content, performing NLP and LLM-based analysis, and generating intent structures to support contact center transformation use cases.
+  </Description>
+
+  <Frontend>
+    <Page id="home">
+      <Title>Website Scraping & Intent Discovery</Title>
+      <Input type="text" id="baseUrl" label="Enter Base URL" placeholder="https://example.com" required="true" />
+      <Button id="startCrawl" action="startCrawlPipeline" label="Start Crawl and Process" />
+      <ProgressIndicator id="status" label="Processing Status" />
+      <Section id="results" label="Intent Hierarchy Viewer" visible="false">
+        <TreeView id="intentTree" dataSource="intentData" />
+        <Button id="downloadJson" label="Download Intents JSON" action="downloadIntentJson" />
+        <Button id="downloadCsv" label="Download Intents CSV" action="downloadIntentCsv" />
+      </Section>
+    </Page>
+  </Frontend>
+
+  <Backend>
+    <Function id="startCrawlPipeline">
+      <Trigger>buttonClick</Trigger>
+      <Inputs>
+        <Input id="baseUrl" type="text" />
+      </Inputs>
+      <Steps>
+        <Step id="parseSitemap">
+          <Description>Parse XML sitemap to extract all public URLs if available</Description>
+          <Library>Scrapy</Library>
+        </Step>
+        <Step id="hierarchicalCrawling">
+          <Description>Perform deep crawl starting from base URL preserving the website structure</Description>
+          <Libraries>Selenium, BeautifulSoup</Libraries>
+        </Step>
+        <Step id="contentExtraction">
+          <Description>Extract support content: FAQs, product pages, forms using page-type classifiers</Description>
+        </Step>
+        <Step id="metadataExtraction">
+          <Description>Extract titles, headers, meta descriptions, and canonical URLs</Description>
+        </Step>
+        <Step id="contentCleanup">
+          <Description>Clean and normalize content using NLP preprocessing</Description>
+          <Libraries>spaCy, NLTK</Libraries>
+        </Step>
+        <Step id="contentPrioritization">
+          <Description>Score and prioritize content based on sitemap position or DOM prominence</Description>
+        </Step>
+        <Step id="questionGeneration">
+          <Description>Generate diverse questions from content using LLM</Description>
+          <Model>OpenAI GPT-4</Model>
+          <Prompt>Generate FAQs or likely user queries from the following page content...</Prompt>
+        </Step>
+        <Step id="topicModeling">
+          <Description>Cluster questions into potential intents using topic modeling</Description>
+          <Library>BERTopic</Library>
+        </Step>
+        <Step id="entityExtraction">
+          <Description>Extract named entities and domain-specific terms for each intent</Description>
+          <Library>spaCy NER</Library>
+        </Step>
+        <Step id="intentHierarchyGeneration">
+          <Description>Create parent-child relationships using URL structure and navigation similarity</Description>
+        </Step>
+        <Step id="intentCollisionDetection">
+          <Description>Use vector embeddings to detect overlapping intents and flag for review</Description>
+          <Library>FAISS or OpenAI Embeddings</Library>
+        </Step>
+        <Step id="responseGeneration">
+          <Description>Generate sample bot responses using the content context of each page</Description>
+        </Step>
+        <Step id="paraphraseGeneration">
+          <Description>Use LLM to paraphrase generated questions for conversational diversity</Description>
+        </Step>
+        <Step id="storeData">
+          <Description>Store all extracted and generated data into database</Description>
+          <Database>PostgreSQL, MongoDB (optional)</Database>
+        </Step>
+        <Step id="displayIntentTree">
+          <Description>Show intent hierarchy tree on UI for review</Description>
+        </Step>
+      </Steps>
+    </Function>
+
+    <Function id="downloadIntentJson">
+      <Description>Allow user to export generated intents in JSON format</Description>
+    </Function>
+
+    <Function id="downloadIntentCsv">
+      <Description>Allow user to export generated intents in CSV format</Description>
+    </Function>
+  </Backend>
+
+  <LLMIntegration>
+    <Provider>OpenAI</Provider>
+    <Models>
+      <Model id="questionGen" type="gpt-4">
+        <Purpose>Generate user questions from support article content</Purpose>
+      </Model>
+      <Model id="paraphrasing" type="gpt-4">
+        <Purpose>Generate paraphrased variations of questions</Purpose>
+      </Model>
+      <Model id="responseGen" type="gpt-4">
+        <Purpose>Generate example chatbot responses from page content</Purpose>
+      </Model>
+    </Models>
+  </LLMIntegration>
+
+  <DataStorage>
+    <Database type="relational" name="PostgreSQL">
+      <Tables>
+        <Table name="Pages" />
+        <Table name="Intents" />
+        <Table name="Questions" />
+        <Table name="Entities" />
+      </Tables>
+    </Database>
+    <VectorDB name="FAISS" purpose="Intent similarity search and collision detection" />
+  </DataStorage>
+
+  <OptionalModules>
+    <Module id="Authentication" description="Add login for enterprise use" />
+    <Module id="Analytics" description="Track content engagement stats or page popularity for prioritization" />
+  </OptionalModules>
+</AppSpec>
