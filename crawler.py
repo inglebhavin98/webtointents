@@ -178,6 +178,17 @@ class WebsiteCrawler:
                 meta_desc = soup.find('meta', attrs={'name': 'description'})
                 description = meta_desc['content'] if meta_desc else ''
 
+                # Collect navigation links
+                internal_links = set()
+                external_links = set()
+                for link in soup.find_all('a', href=True):
+                    next_url = urljoin(url, link['href'])
+                    parsed_url = urlparse(next_url)
+                    if parsed_url.netloc == domain:
+                        internal_links.add(next_url)
+                    else:
+                        external_links.add(next_url)
+
                 if driver:
                     driver.quit()
 
@@ -191,6 +202,10 @@ class WebsiteCrawler:
                     'structure': {
                         'headers': headers,
                         'main_content': text_content
+                    },
+                    'navigation': {
+                        'internal_links': list(internal_links),
+                        'external_links': list(external_links)
                     }
                 }
 
