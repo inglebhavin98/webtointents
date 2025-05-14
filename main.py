@@ -65,11 +65,11 @@ def main():
                 progress_bar = st.progress(0)
                 
                 for i, url in enumerate(st.session_state.selected_urls):
-                st.write(f"🔍 Crawling: {url}")
-                result = st.session_state.crawler.crawl_url(url)
-                if result:
-                    results.append(result)
-                progress_bar.progress((i + 1) / len(st.session_state.urls))
+                    st.write(f"🔍 Crawling: {url}")
+                    result = st.session_state.crawler.crawl_url(url)
+                    if result:
+                        results.append(result)
+                    progress_bar.progress((i + 1) / len(st.session_state.selected_urls))
 
             if results:
                 st.session_state.crawl_results = results
