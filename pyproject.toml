@@ -6,6 +6,7 @@ authors = ["Your Name <you@example.com>"]
 requires-python = ">=3.11"
 dependencies = [
     "beautifulsoup4>=4.13.4",
+    "replit-object-storage>=1.0.2",
     "requests>=2.32.3",
     "scrapy>=2.13.0",
     "selenium>=4.32.0",

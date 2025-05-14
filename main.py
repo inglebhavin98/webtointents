@@ -1,14 +1,16 @@
 
 import streamlit as st
 from crawler import WebsiteCrawler
+from storage import StorageHandler
 import json
 
 def main():
     st.title("Website Scraping & Intent Discovery")
     
-    # Initialize crawler
+    # Initialize crawler and storage
     if 'crawler' not in st.session_state:
         st.session_state.crawler = WebsiteCrawler()
+        st.session_state.storage = StorageHandler()
     
     # Input for base URL
     base_url = st.text_input("Enter Base URL", placeholder="https://example.com")
@@ -39,11 +41,20 @@ def main():
                         results.append(result)
                     progress_bar.progress((i + 1) / len(urls))
                 
-                # Store results in session state
+                # Store results in session state and persistent storage
                 st.session_state.crawl_results = results
                 st.session_state.show_results = True
                 
-                st.success(f"Completed crawling {len(results)} pages!")
+                # Save to storage
+                if results:
+                    filename = st.session_state.storage.save_crawl_results(results, base_url)
+                    st.success(f"Completed crawling {len(results)} pages! Saved as {filename}")
+                    
+                    # Show previous crawls
+                    st.subheader("Previous Crawls")
+                    crawls = st.session_state.storage.list_crawls()
+                    for crawl in crawls[:5]:  # Show last 5 crawls
+                        st.text(crawl)
                 
             except Exception as e:
                 st.error(f"Error during crawling: {e}")
