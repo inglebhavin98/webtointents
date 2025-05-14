@@ -17,29 +17,42 @@ class WebsiteCrawler:
 
     def create_sitemap(self, base_url):
         """Scan website and create sitemap.xml file"""
+        print(f"Starting sitemap creation for {base_url}")
         visited = set()
         to_visit = {base_url}
         domain = urlparse(base_url).netloc
-
+        
+        # Configure session
+        session = requests.Session()
+        session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        })
+        session.verify = False  # Disable SSL verification
+        
         while to_visit:
             url = to_visit.pop()
             if url in visited:
                 continue
 
             try:
-                response = requests.get(url)
+                print(f"Scanning URL: {url}")
+                response = session.get(url, timeout=30, allow_redirects=True)
                 if response.status_code == 200:
                     visited.add(url)
                     soup = BeautifulSoup(response.content, 'html.parser')
 
                     for link in soup.find_all('a', href=True):
                         next_url = urljoin(url, link['href'])
-                        if (urlparse(next_url).netloc == domain and 
+                        parsed_next_url = urlparse(next_url)
+                        if (parsed_next_url.netloc == domain and 
                             next_url not in visited and 
-                            not next_url.endswith(('.pdf', '.jpg', '.png'))):
+                            not next_url.endswith(('.pdf', '.jpg', '.png', '.gif', '.css', '.js')) and
+                            '#' not in next_url):  # Skip anchor links
+                            print(f"Found new URL: {next_url}")
                             to_visit.add(next_url)
             except Exception as e:
-                print(f"Error scanning {url}: {e}")
+                print(f"Error scanning {url}: {str(e)}")
+                continue
 
         # Create sitemap XML
         root = ET.Element("urlset")
