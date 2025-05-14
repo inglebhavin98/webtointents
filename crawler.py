@@ -17,6 +17,23 @@ class WebsiteCrawler:
         self.chrome_options.add_argument('--no-sandbox')
         self.chrome_options.add_argument('--disable-dev-shm-usage')
         
+    def scan_for_urls(self, base_url):
+        try:
+            response = requests.get(base_url)
+            if response.status_code == 200:
+                soup = BeautifulSoup(response.content, 'html.parser')
+                domain = urlparse(base_url).netloc
+                urls = set()
+                
+                for link in soup.find_all('a', href=True):
+                    url = urljoin(base_url, link['href'])
+                    if urlparse(url).netloc == domain:  # Only include URLs from same domain
+                        urls.add(url)
+                return list(urls)
+        except Exception as e:
+            print(f"Error scanning URLs: {e}")
+            return []
+
     def parse_sitemap(self, base_url):
         urls = set()
         try:
@@ -33,8 +50,16 @@ class WebsiteCrawler:
                     for loc in root.findall('.//{http://www.sitemaps.org/schemas/sitemap/0.9}loc'):
                         urls.add(loc.text)
                     break
+            
+            # If no URLs found in sitemap, scan the website
+            if not urls:
+                print("No sitemap found, scanning website for URLs...")
+                urls.update(self.scan_for_urls(base_url))
         except Exception as e:
             print(f"Error parsing sitemap: {e}")
+            # Fallback to manual scanning
+            print("Falling back to manual website scanning...")
+            urls.update(self.scan_for_urls(base_url))
         return list(urls)
     
     def crawl_url(self, url):
