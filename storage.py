@@ -1,11 +1,12 @@
 
-from replit.object_storage import Client
 import json
 from datetime import datetime
+import os
 
 class StorageHandler:
     def __init__(self):
-        self.client = Client()
+        self.storage_dir = "crawl_results"
+        os.makedirs(self.storage_dir, exist_ok=True)
     
     def save_crawl_results(self, results, url):
         if not results:
@@ -13,19 +14,21 @@ class StorageHandler:
             
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"crawl_{timestamp}_{url.replace('https://', '').replace('/', '_')}.json"
+        filepath = os.path.join(self.storage_dir, filename)
         
-        self.client.upload_from_text(
-            filename,
-            json.dumps(results, indent=2)
-        )
+        with open(filepath, 'w') as f:
+            json.dump(results, f, indent=2)
         return filename
     
     def get_crawl_results(self, filename):
         try:
-            content = self.client.download_as_text(filename)
-            return json.loads(content)
+            filepath = os.path.join(self.storage_dir, filename)
+            with open(filepath, 'r') as f:
+                return json.load(f)
         except:
             return None
             
     def list_crawls(self):
-        return [obj.name for obj in self.client.list() if obj.name.startswith('crawl_')]
+        if not os.path.exists(self.storage_dir):
+            return []
+        return [f for f in os.listdir(self.storage_dir) if f.startswith('crawl_')]
