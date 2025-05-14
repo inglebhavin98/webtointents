@@ -111,7 +111,17 @@ class WebsiteCrawler:
     def crawl_url(self, url):
         try:
             with webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=self.chrome_options) as driver:
+                driver.set_page_load_timeout(30)  # Set page load timeout
                 driver.get(url)
+                # Wait for the page to load
+                from selenium.webdriver.support.ui import WebDriverWait
+                from selenium.webdriver.support import expected_conditions as EC
+                from selenium.webdriver.common.by import By
+                
+                WebDriverWait(driver, 10).until(
+                    EC.presence_of_element_located((By.TAG_NAME, "body"))
+                )
+                
                 content = driver.page_source
                 soup = BeautifulSoup(content, 'html.parser')
 

@@ -64,12 +64,20 @@ def main():
                 results = []
                 progress_bar = st.progress(0)
                 
+                total_urls = len(st.session_state.selected_urls)
                 for i, url in enumerate(st.session_state.selected_urls):
-                    st.write(f"🔍 Crawling: {url}")
-                    result = st.session_state.crawler.crawl_url(url)
-                    if result:
-                        results.append(result)
-                    progress_bar.progress((i + 1) / len(st.session_state.selected_urls))
+                    try:
+                        with st.spinner(f"🔍 Crawling ({i+1}/{total_urls}): {url}"):
+                            result = st.session_state.crawler.crawl_url(url)
+                            if result:
+                                results.append(result)
+                                st.success(f"✅ Successfully crawled: {url}")
+                            else:
+                                st.error(f"❌ Failed to crawl: {url}")
+                    except Exception as e:
+                        st.error(f"❌ Error crawling {url}: {str(e)}")
+                    finally:
+                        progress_bar.progress((i + 1) / total_urls)
 
             if results:
                 st.session_state.crawl_results = results
