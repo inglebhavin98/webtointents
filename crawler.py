@@ -156,6 +156,6 @@ class WebsiteCrawler:
                         'main_content': text_content
                     }
                 }
-        except Exception as e:
-            print(f"Error crawling {url}: {e}")
-            return None
+            except Exception as e:
+                print(f"Error crawling {url}: {e}")
+                return None
