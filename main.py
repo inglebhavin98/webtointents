@@ -5,7 +5,7 @@ from storage import StorageHandler
 import json
 
 def main():
-    st.title("Website Scraping & Intent Discovery")
+    st.title("Intent Mapper")
     
     # Initialize crawler and storage
     if 'crawler' not in st.session_state:
