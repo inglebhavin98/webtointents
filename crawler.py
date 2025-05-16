@@ -12,6 +12,10 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.by import By
 from selenium.common.exceptions import TimeoutException, WebDriverException
 import time
+from typing import Dict, Any
+import logging
+
+logger = logging.getLogger(__name__)
 
 class WebsiteCrawler:
     def __init__(self):
@@ -19,6 +23,35 @@ class WebsiteCrawler:
         self.chrome_options.add_argument('--headless')
         self.chrome_options.add_argument('--no-sandbox')
         self.chrome_options.add_argument('--disable-dev-shm-usage')
+
+    def crawl(self, base_url: str) -> Dict[str, Any]:
+        """Crawl a website starting from the base URL and return a dictionary of page data."""
+        logger.info(f"Starting crawl from base URL: {base_url}")
+        
+        # First get all URLs from sitemap or generate one
+        urls = self.parse_sitemap(base_url)
+        if not urls:
+            logger.warning("No URLs found to crawl")
+            return {}
+            
+        # Limit to first 5 pages for testing
+        urls = urls[:5]
+        logger.info(f"Limited crawl to {len(urls)} pages")
+            
+        # Crawl each URL and collect data
+        pages = {}
+        for url in urls:
+            try:
+                logger.info(f"Crawling URL: {url}")
+                page_data = self.crawl_url(url)
+                if page_data:
+                    pages[url] = page_data
+            except Exception as e:
+                logger.error(f"Error crawling {url}: {str(e)}")
+                continue
+                
+        logger.info(f"Completed crawling {len(pages)} pages")
+        return pages
 
     def create_sitemap(self, base_url):
         """Scan website and create sitemap.xml file"""
@@ -165,18 +198,62 @@ class WebsiteCrawler:
                 content = driver.page_source
                 soup = BeautifulSoup(content, 'html.parser')
 
+                # Basic metadata
                 title = soup.title.string if soup.title else ''
-                headers = {
-                    'h1': [h.get_text() for h in soup.find_all('h1')],
-                    'h2': [h.get_text() for h in soup.find_all('h2')],
-                    'h3': [h.get_text() for h in soup.find_all('h3')]
-                }
-
-                text_content = ' '.join([p.get_text() for p in soup.find_all(['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'])])
-                domain = urlparse(url).netloc
-
                 meta_desc = soup.find('meta', attrs={'name': 'description'})
                 description = meta_desc['content'] if meta_desc else ''
+                canonical = soup.find('link', attrs={'rel': 'canonical'})
+                canonical_url = canonical['href'] if canonical else url
+                domain = urlparse(url).netloc
+
+                # Content structure
+                headers = {
+                    'h1': [h.get_text().strip() for h in soup.find_all('h1')],
+                    'h2': [h.get_text().strip() for h in soup.find_all('h2')],
+                    'h3': [h.get_text().strip() for h in soup.find_all('h3')]
+                }
+
+                # Extract main content sections
+                main_content = []
+                for p in soup.find_all(['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6']):
+                    text = p.get_text().strip()
+                    if text:
+                        main_content.append({
+                            'type': p.name,
+                            'text': text
+                        })
+
+                # Extract FAQs if present
+                faqs = []
+                faq_section = soup.find(['div', 'section'], class_=lambda x: x and ('faq' in x.lower() or 'faqs' in x.lower()))
+                if faq_section:
+                    for q in faq_section.find_all(['h3', 'h4', 'strong']):
+                        question = q.get_text().strip()
+                        answer = q.find_next(['p', 'div'])
+                        if answer:
+                            faqs.append({
+                                'question': question,
+                                'answer': answer.get_text().strip()
+                            })
+
+                # Extract forms and their fields
+                forms = []
+                for form in soup.find_all('form'):
+                    form_data = {
+                        'action': form.get('action', ''),
+                        'method': form.get('method', ''),
+                        'fields': []
+                    }
+                    for field in form.find_all(['input', 'textarea', 'select']):
+                        field_data = {
+                            'type': field.name,
+                            'name': field.get('name', ''),
+                            'id': field.get('id', ''),
+                            'placeholder': field.get('placeholder', ''),
+                            'required': field.get('required', False)
+                        }
+                        form_data['fields'].append(field_data)
+                    forms.append(form_data)
 
                 # Collect navigation links
                 internal_links = set()
@@ -189,6 +266,19 @@ class WebsiteCrawler:
                     else:
                         external_links.add(next_url)
 
+                # Determine page type based on content
+                page_type = 'unknown'
+                if faqs:
+                    page_type = 'faq'
+                elif forms:
+                    page_type = 'form'
+                elif any('product' in url.lower() for url in [url, title, description]):
+                    page_type = 'product'
+                elif any('contact' in url.lower() for url in [url, title, description]):
+                    page_type = 'contact'
+                elif any('about' in url.lower() for url in [url, title, description]):
+                    page_type = 'about'
+
                 if driver:
                     driver.quit()
 
@@ -197,11 +287,15 @@ class WebsiteCrawler:
                     'domain': domain,
                     'metadata': {
                         'title': title,
-                        'description': description
+                        'description': description,
+                        'canonical_url': canonical_url,
+                        'page_type': page_type
                     },
                     'structure': {
                         'headers': headers,
-                        'main_content': text_content
+                        'main_content': main_content,
+                        'faqs': faqs,
+                        'forms': forms
                     },
                     'navigation': {
                         'internal_links': list(internal_links),
