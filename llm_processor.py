@@ -1,5 +1,5 @@
 import logging
-import openai
+from openai import OpenAI
 import os
 from dotenv import load_dotenv
 from typing import List, Dict, Any
@@ -12,21 +12,20 @@ logger = logging.getLogger(__name__)
 
 class LLMProcessor:
     def __init__(self):
-        """Initialize the LLM processor with OpenRouter configuration."""
+        """Initialize the LLM processor with OpenAI configuration."""
         try:
             load_dotenv()
-            self.api_key = os.getenv('OPENROUTER_API_KEY')
+            self.api_key = os.getenv('OPENAI_API_KEY')
             self.site_url = os.getenv('SITE_URL', 'http://localhost:8501')
             self.site_name = os.getenv('SITE_NAME', 'Intent Discovery Tool')
-            self.model = "qwen/qwen3-0.6b-04-28:free"
+            self.model = "gpt-4"  # Using GPT-4 for responses API
             
             if not self.api_key:
-                raise ValueError("OPENROUTER_API_KEY not found in environment variables")
+                raise ValueError("OPENAI_API_KEY not found in environment variables")
             
-            logger.info("Initializing OpenRouter client")
-            openai.api_key = self.api_key
-            openai.api_base = "https://openrouter.ai/api/v1"
-            logger.info(f"OpenRouter client initialized successfully with model: {self.model}")
+            logger.info("Initializing OpenAI client")
+            self.client = OpenAI(api_key=self.api_key)
+            logger.info(f"OpenAI client initialized successfully with model: {self.model}")
             
         except Exception as e:
             logger.error(f"Error initializing LLM processor: {str(e)}")
@@ -97,19 +96,12 @@ Raw Content:
             logger.debug(f"System: 'You are an expert content and intent analyst.'")
             logger.debug(f"User prompt: {prompt_1}")
 
-            completion = openai.ChatCompletion.create(
-                headers={
-                    "HTTP-Referer": self.site_url,
-                    "X-Title": self.site_name,
-                },
+            logger.info("Sending request to OpenAI")
+            completion = self.client.responses.create(
                 model=self.model,
-                messages=[
-                    {"role": "system", "content": "You are an expert content and intent analyst."},
-                    {"role": "user", "content": prompt_1}
-                ],
-                temperature=0.3
+                input=prompt_1
             )
-            response = completion.choices[0].message.content
+            response = completion.output_text
             logger.info("Received enhanced context analysis")
             logger.debug(f"Context analysis: {response}")
             try:
@@ -203,24 +195,17 @@ Analyze and extract all insights using this structure:
     }}
 }}"""
 
-            logger.info("About to make OpenRouter API call for enhanced analysis...")
-            completion = openai.ChatCompletion.create(
-                headers={
-                    "HTTP-Referer": self.site_url,
-                    "X-Title": self.site_name,
-                },
+            logger.info("Sending request to OpenAI for enhanced analysis...")
+            response = self.client.responses.create(
                 model=self.model,
-                messages=[
-                    {"role": "system", "content": "You are an expert NLU analyst specializing in deep content understanding and intent discovery."},
-                    {"role": "user", "content": prompt_2}
-                ],
-                temperature=0.3
+                input=prompt_2,
+                response_format={"type": "json_object"}  # Ensure JSON response
             )
-            response = completion.choices[0].message.content
+            
             logger.info("Received comprehensive analysis")
-            logger.debug(f"Analysis response: {response}")
+            logger.debug(f"Analysis response: {response.output_text}")
             try:
-                analysis = json.loads(response)
+                analysis = json.loads(response.output_text)
                 return analysis
             except json.JSONDecodeError as e:
                 logger.error(f"Error parsing JSON response: {str(e)}")
@@ -313,24 +298,14 @@ Analyze and extract all insights using this structure:
             logger.debug("Sending prompt to LLM for intent generation:")
             logger.debug(f"User prompt: {prompt}")
 
-            logger.info("Sending request to OpenRouter")
-            completion = openai.ChatCompletion.create(
-                headers={
-                    "HTTP-Referer": self.site_url,
-                    "X-Title": self.site_name,
-                },
+            logger.info("Sending request to OpenAI for intent generation")
+            completion = self.client.responses.create(
                 model=self.model,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
-                ],
-                temperature=0.7  # Added temperature for better response variety
+                input=prompt
             )
 
-            response = completion.choices[0].message.content
-            logger.info("Received response from OpenRouter")
+            response = completion.output_text
+            logger.info("Received response from OpenAI")
             logger.debug(f"Response: {response}")
 
             return response
@@ -370,24 +345,14 @@ Return a JSON object with the following structure:
             logger.debug("Sending prompt to LLM for intent hierarchy generation:")
             logger.debug(f"User prompt: {prompt}")
 
-            logger.info("Sending request to OpenRouter")
-            completion = openai.ChatCompletion.create(
-                headers={
-                    "HTTP-Referer": self.site_url,
-                    "X-Title": self.site_name,
-                },
+            logger.info("Sending request to OpenAI for hierarchy generation")
+            completion = self.client.responses.create(
                 model=self.model,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
-                ],
-                temperature=0.7  # Added temperature for better response variety
+                input=prompt
             )
 
-            response = completion.choices[0].message.content
-            logger.info("Received response from OpenRouter")
+            response = completion.output_text
+            logger.info("Received response from OpenAI")
             logger.debug(f"Response: {response}")
 
             return response
@@ -397,7 +362,7 @@ Return a JSON object with the following structure:
             return None
 
     def generate_questions(self, content: str, num_questions: int = 5) -> List[str]:
-        """Generate questions from content using DeepSeek model."""
+        """Generate questions from content using OpenAI model."""
         if not content.strip():
             logger.warning("Empty content provided to generate_questions")
             return []
@@ -411,32 +376,19 @@ Return a JSON object with the following structure:
 
         Questions:"""
 
-        # Log the prompt being sent
-        logger.debug("Sending prompt to LLM for question generation:")
-        logger.debug(f"System: 'You are a helpful assistant that generates natural user questions from content.'")
-        logger.debug(f"User prompt: {prompt}")
-
         try:
-            logger.debug(f"Making API call to OpenRouter with model: {self.model}")
+            logger.debug(f"Making API call to OpenAI with model: {self.model}")
             logger.debug(f"Content length: {len(content)} characters")
             
-            completion = openai.ChatCompletion.create(
-                headers={
-                    "HTTP-Referer": self.site_url,
-                    "X-Title": self.site_name,
-                },
+            response = self.client.responses.create(
                 model=self.model,
-                messages=[
-                    {"role": "system", "content": "You are a helpful assistant that generates natural user questions from content."},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.7,
-                max_tokens=500
+                input=prompt,
+                response_format={"type": "json_object"}  # Ensure JSON response
             )
             
-            logger.debug("Successfully received response from OpenRouter")
+            logger.debug("Successfully received response from OpenAI")
             # Parse the response to get questions
-            questions = json.loads(completion.choices[0].message.content)
+            questions = json.loads(response.output_text)
             logger.info(f"Generated {len(questions)} questions")
             return questions
             
@@ -461,29 +413,16 @@ Return a JSON object with the following structure:
 
         Response:"""
 
-        # Log the prompt being sent
-        logger.debug("Sending prompt to LLM for response generation:")
-        logger.debug(f"System: 'You are a helpful assistant that provides accurate responses based on given context.'")
-        logger.debug(f"User prompt: {prompt}")
-
         try:
             logger.debug(f"Making API call to generate response for question: {question[:50]}...")
-            completion = openai.ChatCompletion.create(
-                headers={
-                    "HTTP-Referer": self.site_url,
-                    "X-Title": self.site_name,
-                },
+            response = self.client.responses.create(
                 model=self.model,
-                messages=[
-                    {"role": "system", "content": "You are a helpful assistant that provides accurate responses based on given context."},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.3,
-                max_tokens=300
+                input=prompt,
+                max_tokens=500  # Limit response length
             )
             
             logger.debug("Successfully generated response")
-            return completion.choices[0].message.content.strip()
+            return response.output_text.strip()
             
         except Exception as e:
             logger.error(f"Error generating response: {str(e)}")
@@ -504,29 +443,16 @@ Return a JSON object with the following structure:
 
         Variations:"""
 
-        # Log the prompt being sent
-        logger.debug("Sending prompt to LLM for paraphrase generation:")
-        logger.debug(f"System: 'You are a helpful assistant that generates natural paraphrases.'")
-        logger.debug(f"User prompt: {prompt}")
-
         try:
             logger.debug(f"Making API call to generate paraphrases for text: {text[:50]}...")
-            completion = openai.ChatCompletion.create(
-                headers={
-                    "HTTP-Referer": self.site_url,
-                    "X-Title": self.site_name,
-                },
+            response = self.client.responses.create(
                 model=self.model,
-                messages=[
-                    {"role": "system", "content": "You are a helpful assistant that generates natural paraphrases."},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.7,
-                max_tokens=300
+                input=prompt,
+                response_format={"type": "json_object"}  # Ensure JSON response
             )
             
             logger.debug("Successfully generated paraphrases")
-            variations = json.loads(completion.choices[0].message.content)
+            variations = json.loads(response.output_text)
             logger.info(f"Generated {len(variations)} paraphrases")
             return variations
             
@@ -587,21 +513,13 @@ Return a JSON object with the following structure:
                 }}
             }}"""
 
-            logger.info("Sending request to OpenRouter for hierarchy generation")
-            completion = openai.ChatCompletion.create(
-                headers={
-                    "HTTP-Referer": self.site_url,
-                    "X-Title": self.site_name,
-                },
+            logger.info("Sending request to OpenAI for hierarchy generation")
+            completion = self.client.responses.create(
                 model=self.model,
-                messages=[
-                    {"role": "system", "content": "You are an expert at organizing and structuring content hierarchies."},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.3
+                input=prompt
             )
             
-            response = completion.choices[0].message.content
+            response = completion.output_text
             logger.info("Received hierarchy generation response")
             
             try:
@@ -686,24 +604,13 @@ Important:
 3. Provide confidence scores where relevant
 4. Link all insights to specific content signals"""
 
-            logger.info("Sending request to OpenRouter for contact center intent analysis")
-            completion = openai.ChatCompletion.create(
-                headers={
-                    "HTTP-Referer": self.site_url,
-                    "X-Title": self.site_name,
-                },
+            logger.info("Sending request to OpenAI for contact center intent analysis")
+            completion = self.client.responses.create(
                 model=self.model,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "You are an expert intent discovery analyst specializing in contact center transformation."
-                    },
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.3
+                input=prompt
             )
 
-            response = completion.choices[0].message.content
+            response = completion.output_text
             logger.info("Received contact center intent analysis")
 
             try:
@@ -732,7 +639,7 @@ You are an Intent Discovery Expert helping a contact center transformation team.
 
 You are given structured HTML content from a product website, including headers, paragraphs, titles, testimonials, and internal/external links.
 
-Your goal is to analyze this content and return a structured \"Intent Map\" that captures what a user visiting this website may want to do.
+Your goal is to analyze this content and return a structured "Intent Map" that captures what a user visiting this website may want to do.
 
 **IMPORTANT: Your output must include a markdown table with the following columns:**
 | Intent Name | User Goal | Sample Phrases | Source Context |
@@ -759,19 +666,11 @@ Your goal is to analyze this content and return a structured \"Intent Map\" that
 """
             logger.info("Sending specialized contact center intent prompt to LLM...")
             logger.debug(f"Prompt sent to LLM:\n{prompt}")
-            completion = openai.ChatCompletion.create(
-                headers={
-                    "HTTP-Referer": self.site_url,
-                    "X-Title": self.site_name,
-                },
+            completion = self.client.responses.create(
                 model=self.model,
-                messages=[
-                    {"role": "system", "content": "You are an Intent Discovery Expert for contact center transformation."},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.3
+                input=prompt
             )
-            response = completion.choices[0].message.content
+            response = completion.output_text
             logger.info("Received Intent Map from LLM")
             return {"intent_map": response, "llm_prompt": prompt}
         except Exception as e:
