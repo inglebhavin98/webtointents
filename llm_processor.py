@@ -2,13 +2,205 @@ import logging
 import openai
 import os
 from dotenv import load_dotenv
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional, Union
 import json
 import uuid
+from dataclasses import dataclass
+from enum import Enum
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
+
+class AnalysisType(Enum):
+    STANDARD = "standard"
+    CONTACT_CENTER = "contact_center"
+    HIERARCHY = "hierarchy"
+
+@dataclass
+class AnalysisResult:
+    success: bool
+    data: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+    raw_response: Optional[str] = None
+
+class ContentPreparator:
+    """Handles content preparation and formatting for analysis."""
+    
+    @staticmethod
+    def prepare_page_content(page_data: Dict[str, Any]) -> str:
+        """Prepare structured content from page data for analysis."""
+        try:
+            sections = []
+            
+            # Add metadata
+            metadata = page_data.get('metadata', {})
+            if metadata:
+                sections.append("== Page Metadata ==")
+                sections.append(f"Title: {metadata.get('title', '')}")
+                sections.append(f"Description: {metadata.get('description', '')}")
+            
+            # Add main content sections
+            content = page_data.get('content', [])
+            if content:
+                sections.append("\n== Main Content ==")
+                for item in content:
+                    if isinstance(item, dict):
+                        section_type = item.get('type', 'text')
+                        text = item.get('text', '')
+                        sections.append(f"[{section_type}] {text}")
+            
+            # Add navigation links
+            navigation = page_data.get('navigation', {})
+            if navigation:
+                sections.append("\n== Navigation ==")
+                if internal_links := navigation.get('internal_links', []):
+                    sections.append("Internal Links:")
+                    for link in internal_links:
+                        sections.append(f"- {link}")
+                if external_links := navigation.get('external_links', []):
+                    sections.append("\nExternal Links:")
+                    for link in external_links:
+                        sections.append(f"- {link}")
+            
+            # Add any FAQs
+            if faqs := page_data.get('faqs', []):
+                sections.append("\n== FAQs ==")
+                for faq in faqs:
+                    sections.append(f"Q: {faq.get('question', '')}")
+                    sections.append(f"A: {faq.get('answer', '')}\n")
+            
+            return "\n".join(sections)
+            
+        except Exception as e:
+            logger.error(f"Error preparing content: {str(e)}")
+            return ""
+
+class PromptGenerator:
+    """Handles generation of prompts for different analysis types."""
+    
+    @staticmethod
+    def get_contact_center_prompt(content: str) -> str:
+        """Generate prompt for contact center intent analysis."""
+        return f"""You are an Intent Discovery Expert helping a contact center transformation team.
+
+Given the following structured website content, analyze and return a comprehensive intent map.
+
+Content to analyze:
+{content}
+
+Return your analysis in this JSON structure:
+
+{{
+    "high_level_summary": {{
+        "offering": "2-3 sentence description of company offering",
+        "target_audience": "description of target users"
+    }},
+    "core_intents": [
+        {{
+            "intent_name": "what the user wants to do",
+            "signals": [
+                {{
+                    "type": "header/paragraph/testimonial/link",
+                    "content": "the specific content supporting this intent",
+                    "confidence": 0.0 to 1.0
+                }}
+            ],
+            "priority": "high/medium/low"
+        }}
+    ],
+    "feature_intent_mapping": [
+        {{
+            "feature": "specific feature name",
+            "intent": "associated user intent",
+            "value_proposition": "why this matters to user"
+        }}
+    ],
+    "sub_intents": [
+        {{
+            "parent_intent": "name of major intent",
+            "children": [
+                {{
+                    "name": "sub-intent name",
+                    "motivation": "user motivation",
+                    "signals": ["supporting evidence"]
+                }}
+            ]
+        }}
+    ],
+    "link_clusters": [
+        {{
+            "cluster_name": "Lead Generation/Content Marketing/Support/Trust Building",
+            "urls": ["list of URLs in this cluster"],
+            "pattern": "why these links are grouped together"
+        }}
+    ]
+}}
+
+Important:
+1. Only use information present in the provided content
+2. Do not make assumptions or add information not in the source
+3. Provide confidence scores where relevant
+4. Link all insights to specific content signals"""
+
+    @staticmethod
+    def get_standard_prompt(content: str) -> str:
+        """Generate prompt for standard intent analysis."""
+        return f"""Analyze the following content and identify user intents and goals.
+
+Content:
+{content}
+
+Return your analysis in this JSON structure:
+{{
+    "primary_intent": {{
+        "name": "main intent name",
+        "description": "detailed description",
+        "confidence": 0.0 to 1.0
+    }},
+    "user_goals": [
+        {{
+            "goal": "specific user goal",
+            "steps": ["steps to achieve goal"],
+            "blockers": ["potential obstacles"]
+        }}
+    ],
+    "questions_and_answers": [
+        {{
+            "question": "natural user question",
+            "answer": "derived answer from content",
+            "variations": ["question paraphrases"]
+        }}
+    ]
+}}"""
+
+class ResponseValidator:
+    """Handles validation and cleaning of LLM responses."""
+    
+    @staticmethod
+    def clean_json_response(response: str) -> str:
+        """Clean and extract JSON from response."""
+        response = response.strip()
+        if not response.startswith('{'):
+            start_idx = response.find('{')
+            if start_idx != -1:
+                response = response[start_idx:]
+                end_idx = response.rfind('}')
+                if end_idx != -1:
+                    response = response[:end_idx + 1]
+        return response
+
+    @staticmethod
+    def validate_contact_center_response(data: Dict[str, Any]) -> bool:
+        """Validate contact center intent analysis response."""
+        required_keys = [
+            'high_level_summary',
+            'core_intents',
+            'feature_intent_mapping',
+            'sub_intents',
+            'link_clusters'
+        ]
+        return all(key in data for key in required_keys)
 
 class LLMProcessor:
     def __init__(self):
@@ -18,7 +210,6 @@ class LLMProcessor:
             self.api_key = os.getenv('OPENROUTER_API_KEY')
             self.site_url = os.getenv('SITE_URL', 'http://localhost:8501')
             self.site_name = os.getenv('SITE_NAME', 'Intent Discovery Tool')
-            # self.model = "qwen/qwen3-0.6b-04-28:free"
             self.model = "meta-llama/llama-3.3-8b-instruct:free"
             
             if not self.api_key:
@@ -32,6 +223,107 @@ class LLMProcessor:
         except Exception as e:
             logger.error(f"Error initializing LLM processor: {str(e)}")
             raise
+
+    def _make_llm_request(self, prompt: str, system_message: str) -> AnalysisResult:
+        """Make a request to the LLM and handle the response."""
+        try:
+            completion = openai.ChatCompletion.create(
+                headers={
+                    "HTTP-Referer": self.site_url,
+                    "X-Title": self.site_name,
+                },
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": system_message},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.3
+            )
+            
+            response = completion.choices[0].message.content
+            return AnalysisResult(success=True, raw_response=response)
+            
+        except Exception as e:
+            logger.error(f"Error making LLM request: {str(e)}")
+            return AnalysisResult(success=False, error=str(e))
+
+    def analyze_contact_center_intents(self, page_data: Dict[str, Any]) -> AnalysisResult:
+        """Analyze page data for contact center intents."""
+        try:
+            # Prepare content
+            content = ContentPreparator.prepare_page_content(page_data)
+            if not content:
+                return AnalysisResult(success=False, error="Failed to prepare content")
+
+            # Generate prompt
+            prompt = PromptGenerator.get_contact_center_prompt(content)
+            
+            # Make LLM request
+            result = self._make_llm_request(
+                prompt,
+                "You are an expert intent discovery analyst specializing in contact center transformation."
+            )
+            
+            if not result.success:
+                return result
+
+            # Clean and validate response
+            cleaned_response = ResponseValidator.clean_json_response(result.raw_response)
+            try:
+                analysis = json.loads(cleaned_response)
+                if not ResponseValidator.validate_contact_center_response(analysis):
+                    return AnalysisResult(
+                        success=False,
+                        error="Invalid response structure",
+                        raw_response=cleaned_response
+                    )
+                return AnalysisResult(success=True, data=analysis)
+            except json.JSONDecodeError as e:
+                return AnalysisResult(
+                    success=False,
+                    error=f"Error parsing JSON: {str(e)}",
+                    raw_response=cleaned_response
+                )
+
+        except Exception as e:
+            logger.error(f"Error in contact center intent analysis: {str(e)}")
+            return AnalysisResult(success=False, error=str(e))
+
+    def analyze_standard_intents(self, page_data: Dict[str, Any]) -> AnalysisResult:
+        """Analyze page data for standard intents."""
+        try:
+            # Prepare content
+            content = ContentPreparator.prepare_page_content(page_data)
+            if not content:
+                return AnalysisResult(success=False, error="Failed to prepare content")
+
+            # Generate prompt
+            prompt = PromptGenerator.get_standard_prompt(content)
+            
+            # Make LLM request
+            result = self._make_llm_request(
+                prompt,
+                "You are an expert NLU analyst specializing in intent discovery."
+            )
+            
+            if not result.success:
+                return result
+
+            # Clean and parse response
+            cleaned_response = ResponseValidator.clean_json_response(result.raw_response)
+            try:
+                analysis = json.loads(cleaned_response)
+                return AnalysisResult(success=True, data=analysis)
+            except json.JSONDecodeError as e:
+                return AnalysisResult(
+                    success=False,
+                    error=f"Error parsing JSON: {str(e)}",
+                    raw_response=cleaned_response
+                )
+
+        except Exception as e:
+            logger.error(f"Error in standard intent analysis: {str(e)}")
+            return AnalysisResult(success=False, error=str(e))
 
     def extract_page_context(self, text: str) -> Dict[str, Any]:
         """Step 1: Deep content understanding and classification."""
@@ -614,108 +906,6 @@ Return a JSON object with the following structure:
 
         except Exception as e:
             logger.error(f"Error generating intent hierarchy: {str(e)}")
-            return None
-
-    def analyze_contact_center_intents(self, page_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Advanced intent analysis for contact center transformation."""
-        try:
-            if not page_data:
-                logger.error("Invalid page data for intent analysis")
-                return None
-
-            # Construct content from page data
-            content = self._prepare_content_for_analysis(page_data)
-            
-            prompt = f"""You are an Intent Discovery Expert helping a contact center transformation team.
-
-Given the following structured website content, analyze and return a comprehensive intent map.
-
-Content to analyze:
-{content}
-
-Return your analysis in this JSON structure:
-
-{{
-    "high_level_summary": {{
-        "offering": "2-3 sentence description of company offering",
-        "target_audience": "description of target users"
-    }},
-    "core_intents": [
-        {{
-            "intent_name": "what the user wants to do",
-            "signals": [
-                {{
-                    "type": "header/paragraph/testimonial/link",
-                    "content": "the specific content supporting this intent",
-                    "confidence": 0.0 to 1.0
-                }}
-            ],
-            "priority": "high/medium/low"
-        }}
-    ],
-    "feature_intent_mapping": [
-        {{
-            "feature": "specific feature name",
-            "intent": "associated user intent",
-            "value_proposition": "why this matters to user"
-        }}
-    ],
-    "sub_intents": [
-        {{
-            "parent_intent": "name of major intent",
-            "children": [
-                {{
-                    "name": "sub-intent name",
-                    "motivation": "user motivation",
-                    "signals": ["supporting evidence"]
-                }}
-            ]
-        }}
-    ],
-    "link_clusters": [
-        {{
-            "cluster_name": "Lead Generation/Content Marketing/Support/Trust Building",
-            "urls": ["list of URLs in this cluster"],
-            "pattern": "why these links are grouped together"
-        }}
-    ]
-}}
-
-Important:
-1. Only use information present in the provided content
-2. Do not make assumptions or add information not in the source
-3. Provide confidence scores where relevant
-4. Link all insights to specific content signals"""
-
-            logger.info("Sending request to OpenRouter for contact center intent analysis")
-            completion = openai.ChatCompletion.create(
-                headers={
-                    "HTTP-Referer": self.site_url,
-                    "X-Title": self.site_name,
-                },
-                model=self.model,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "You are an expert intent discovery analyst specializing in contact center transformation."
-                    },
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.3
-            )
-
-            response = completion.choices[0].message.content
-            logger.info("Received contact center intent analysis")
-
-            try:
-                analysis = json.loads(response)
-                return analysis
-            except json.JSONDecodeError as e:
-                logger.error(f"Error parsing intent analysis JSON: {str(e)}")
-                return None
-
-        except Exception as e:
-            logger.error(f"Error in contact center intent analysis: {str(e)}")
             return None
 
     def analyze_contact_center_intents(self, html_content: str) -> dict:

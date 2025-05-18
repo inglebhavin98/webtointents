@@ -3,6 +3,7 @@ import logging
 from crawler import WebsiteCrawler
 from llm_processor import LLMProcessor
 from intent_generator import IntentGenerator
+from src.processors import AnalysisPipeline, PipelineStage, DataCleaner
 import json
 import os
 from dotenv import load_dotenv
@@ -10,6 +11,8 @@ import xml.etree.ElementTree as ET
 from io import StringIO
 from typing import Dict, Any
 from collections import defaultdict
+from datetime import datetime
+import asyncio
 
 # Configure logging
 logging.basicConfig(
@@ -27,12 +30,20 @@ def initialize_components():
         logger.info("Initializing components...")
         llm_processor = LLMProcessor()
         intent_generator = IntentGenerator(llm_processor)
+        pipeline = AnalysisPipeline(llm_processor=llm_processor, progress_callback=update_progress)
+        data_cleaner = DataCleaner()
         logger.info("All components initialized successfully")
-        return llm_processor, intent_generator
+        return llm_processor, intent_generator, pipeline, data_cleaner
     except Exception as e:
         logger.error(f"Error initializing components: {str(e)}")
         st.error(f"Error initializing components: {str(e)}")
-        return None, None
+        return None, None, None, None
+
+def update_progress(stage: str, progress: float):
+    """Update progress in the Streamlit UI."""
+    st.session_state.progress = progress
+    st.session_state.current_stage = stage
+    st.progress(progress, text=f"Stage: {stage}")
 
 def parse_uploaded_sitemap(uploaded_file):
     """Parse an uploaded sitemap XML file and return list of URLs."""
@@ -237,107 +248,56 @@ def display_contact_center_intent_map(intent_map: dict):
             for url in cluster.get('urls', []):
                 st.write(f"- {url}")
 
-def clean_scraped_data(page_data: dict) -> dict:
-    """Clean and preprocess scraped page data before LLM analysis."""
-    import re
-    from collections import OrderedDict
+def save_crawled_data(data: dict, urls: list):
+    """Save crawled data to a local file."""
+    try:
+        # Create crawled_data directory if it doesn't exist
+        os.makedirs('crawled_data', exist_ok=True)
+        
+        # Generate filename based on timestamp and first URL
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        first_url = urls[0].replace('https://', '').replace('http://', '').replace('/', '_')
+        filename = f'crawled_data/crawl_{timestamp}_{first_url}.json'
+        
+        # Prepare data for storage
+        storage_data = {
+            'metadata': {
+                'timestamp': timestamp,
+                'urls': urls,
+                'total_urls': len(urls),
+                'successful_crawls': len(data)
+            },
+            'crawled_data': data
+        }
+        
+        # Save to file
+        with open(filename, 'w', encoding='utf-8') as f:
+            json.dump(storage_data, f, indent=2)
+        
+        logger.info(f"Successfully saved crawled data to {filename}")
+        return filename
+    except Exception as e:
+        logger.error(f"Error saving crawled data: {str(e)}")
+        return None
 
-    def deduplicate_list(items):
-        seen = set()
-        deduped = []
-        for item in items:
-            key = item.strip().lower()
-            if key and key not in seen:
-                deduped.append(item)
-                seen.add(key)
-        return deduped
+def parse_urls(url_input: str) -> list:
+    """Parse comma-separated URLs from input string."""
+    if not url_input:
+        return []
+    
+    # Split by comma and clean URLs
+    urls = [url.strip() for url in url_input.split(',')]
+    # Remove empty strings and duplicates
+    urls = list(set(filter(None, urls)))
+    return urls
 
-    def remove_empty_fields(d):
-        if isinstance(d, dict):
-            return {k: remove_empty_fields(v) for k, v in d.items() if v not in [None, '', [], {}]}
-        elif isinstance(d, list):
-            return [remove_empty_fields(x) for x in d if x not in [None, '', [], {}]]
-        else:
-            return d
-
-    def chunk_by_headers(content_blocks):
-        # Simple chunking by h2/h3 or paragraph blocks
-        chunks = []
-        current = []
-        for block in content_blocks:
-            if isinstance(block, dict) and block.get('tag') in ['h2', 'h3']:
-                if current:
-                    chunks.append(current)
-                current = [block]
-            else:
-                current.append(block)
-        if current:
-            chunks.append(current)
-        return chunks
-
-    def normalize_text(text):
-        # Remove CTAs (simple heuristics)
-        cta_patterns = [r'click here', r'contact us', r'learn more', r'sign up', r'get started']
-        for pat in cta_patterns:
-            text = re.sub(pat, '', text, flags=re.IGNORECASE)
-        # Expand common acronyms (add more as needed)
-        acronyms = {'FAQ': 'Frequently Asked Questions', 'CTA': 'Call To Action'}
-        for acro, full in acronyms.items():
-            text = re.sub(rf'\b{acro}\b', full, text)
-        return text.strip()
-
-    # 1. Deduplicate headers, FAQs, repeated text
-    if 'headers' in page_data:
-        page_data['headers'] = deduplicate_list(page_data['headers'])
-    if 'faqs' in page_data:
-        page_data['faqs'] = deduplicate_list(page_data['faqs'])
-    if 'content' in page_data and isinstance(page_data['content'], list):
-        seen = set()
-        deduped_content = []
-        for block in page_data['content']:
-            txt = block.get('text', '').strip().lower() if isinstance(block, dict) else str(block).strip().lower()
-            if txt and txt not in seen:
-                deduped_content.append(block)
-                seen.add(txt)
-        page_data['content'] = deduped_content
-
-    # 2. Remove empty/missing fields
-    page_data = remove_empty_fields(page_data)
-
-    # 3. Chunk content by h2/h3 or paragraph block
-    if 'content' in page_data and isinstance(page_data['content'], list):
-        page_data['chunks'] = chunk_by_headers(page_data['content'])
-
-    # 4. Keep clean FAQ dataset
-    if 'faqs' in page_data:
-        page_data['faqs_clean'] = [normalize_text(faq) for faq in page_data['faqs']]
-
-    # 5. Normalize noisy text
-    for key in ['headers', 'faqs_clean']:
-        if key in page_data:
-            page_data[key] = [normalize_text(t) for t in page_data[key]]
-    if 'content' in page_data and isinstance(page_data['content'], list):
-        for block in page_data['content']:
-            if isinstance(block, dict) and 'text' in block:
-                block['text'] = normalize_text(block['text'])
-
-    # 6. Optionally tag chunks with metadata
-    if 'chunks' in page_data:
-        for i, chunk in enumerate(page_data['chunks']):
-            for block in chunk:
-                if isinstance(block, dict):
-                    block['chunk_id'] = i
-
-    return page_data
-
-def main():
-    # st.write(':green-background[App loaded! If you see this, the UI is rendering and waiting for your input.]')
+async def main():
     st.title("Intent Scraper")
     
     # Initialize components
     crawler = WebsiteCrawler()
-    llm_processor, intent_generator = initialize_components()
-    if not all([llm_processor, intent_generator]):
+    llm_processor, intent_generator, pipeline, data_cleaner = initialize_components()
+    if not all([llm_processor, intent_generator, pipeline, data_cleaner]):
         st.error("Failed to initialize required components. Please check the logs for details.")
         return
     
@@ -346,9 +306,13 @@ def main():
         st.session_state.analyzed_intents = []
     if 'parsed_urls' not in st.session_state:
         st.session_state.parsed_urls = []
+    if 'progress' not in st.session_state:
+        st.session_state.progress = 0.0
+    if 'current_stage' not in st.session_state:
+        st.session_state.current_stage = "Not started"
     
     # URL input and sitemap upload interface
-    url = st.text_input("Enter URL to analyze")
+    url_input = st.text_input("Enter URLs to analyze (comma-separated)")
     uploaded_file = st.file_uploader("Or upload a sitemap", type=['xml'])
     
     # Parse sitemap if uploaded
@@ -357,7 +321,7 @@ def main():
         if st.session_state.parsed_urls:
             st.success(f"Successfully parsed {len(st.session_state.parsed_urls)} URLs from sitemap")
     
-    # Display URL selection if URLs are parsed
+    # Display URL selection if URLs are parsed from sitemap
     if st.session_state.parsed_urls:
         st.subheader("Select URLs to Analyze")
         selected_urls = st.multiselect(
@@ -368,169 +332,83 @@ def main():
         st.write(f"Selected {len(selected_urls)} URLs for analysis")
     
     if st.button("Start Analysis"):
-        if url or selected_urls:
+        # Get URLs from either comma-separated input or sitemap selection
+        urls_to_analyze = []
+        if url_input:
+            urls_to_analyze = parse_urls(url_input)
+        elif 'selected_urls' in locals():
+            urls_to_analyze = selected_urls
+        
+        if urls_to_analyze:
             with st.spinner("Crawling pages..."):
                 pages = {}
-                if url:
-                    # Crawl single URL
-                    page_data = crawler.crawl_url(url)
-                    if page_data:
-                        pages[url] = page_data
-                else:
-                    # Crawl selected URLs from sitemap
-                    progress_bar = st.progress(0)
-                    for i, url in enumerate(selected_urls):
-                        try:
-                            logger.info(f"Crawling URL: {url}")
-                            with st.spinner(f"Crawling {url}..."):
-                                page_data = crawler.crawl_url(url)
-                                if page_data:
-                                    pages[url] = page_data
-                            progress_bar.progress((i + 1) / len(selected_urls))
-                        except Exception as e:
-                            logger.error(f"Error crawling {url}: {str(e)}")
-                            continue
+                progress_bar = st.progress(0)
+                
+                # Crawl each URL
+                for i, url in enumerate(urls_to_analyze):
+                    try:
+                        logger.info(f"Crawling URL: {url}")
+                        with st.spinner(f"Crawling {url}..."):
+                            page_data = crawler.crawl_url(url)
+                            if page_data:
+                                # Clean the scraped data using DataCleaner
+                                cleaning_result = data_cleaner.process({'page_data': page_data})
+                                if cleaning_result.success:
+                                    pages[url] = cleaning_result.data
+                                else:
+                                    logger.error(f"Error cleaning data for {url}: {cleaning_result.error}")
+                                    continue
+                        progress_bar.progress((i + 1) / len(urls_to_analyze))
+                    except Exception as e:
+                        logger.error(f"Error crawling {url}: {str(e)}")
+                        continue
+                
                 if pages:
+                    # Save crawled data locally
+                    saved_file = save_crawled_data(pages, urls_to_analyze)
+                    if saved_file:
+                        st.success(f"Successfully saved crawled data to {saved_file}")
+                    
                     st.session_state.pages = pages
                     st.session_state.cleaned_pages = None
                     st.session_state.show_cleaned = False
-                    st.success(f"Successfully crawled {len(pages)} pages")
-
-    # Show cleaning CTA and previews if pages are in session state
-    if 'pages' in st.session_state and st.session_state.pages:
-        # Clean Scraped Data button
-        if st.button("Clean Scraped Data"):
-            cleaned_pages = {}
-            for page_url, page_data in st.session_state.pages.items():
-                cleaned_pages[page_url] = clean_scraped_data(page_data)
-            st.session_state.cleaned_pages = cleaned_pages
-            st.session_state.show_cleaned = True
-
-        # Show cleaned or raw preview based on state
-        if st.session_state.get('show_cleaned') and st.session_state.get('cleaned_pages'):
-            st.header("Cleaned Scraped Data Preview")
-            for page_url, page_data in st.session_state.cleaned_pages.items():
-                with st.expander(f"{page_url}"):
-                    st.write("**Metadata:**")
-                    st.json(page_data.get('metadata', {}))
-                    st.write("**Structure:**")
-                    st.json(page_data.get('structure', {}))
-                    st.write("**Navigation:**")
-                    st.json(page_data.get('navigation', {}))
-                    import json
-                    import hashlib
-                    raw_json = json.dumps(page_data, indent=2, ensure_ascii=False)
-                    url_hash = hashlib.md5(page_url.encode('utf-8')).hexdigest()
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        if st.button(f"Save JSON", key=f"save_json_{url_hash}_cleaned"):
-                            import datetime
-                            import os
-                            safe_url = page_url.replace('https://', '').replace('http://', '').replace('/', '_')
-                            filename = f"scraped_{safe_url}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-                            save_path = os.path.join('crawl_results', filename)
-                            os.makedirs('crawl_results', exist_ok=True)
-                            with open(save_path, 'w', encoding='utf-8') as f:
-                                f.write(raw_json)
-                            st.success(f"Saved to {save_path}")
-                    with col2:
-                        st.code(raw_json, language='json')
-                        st.caption("You can copy the above JSON using the copy button in the code block.")
-
-            # --- LLM Intent Extraction Section (now below the cleaned data preview) ---
-            st.markdown("---")
-            st.subheader("LLM Intent Extraction")
-            for page_url, page_data in st.session_state.cleaned_pages.items():
-                url_hash = hashlib.md5(page_url.encode('utf-8')).hexdigest()
-                st.markdown(f"**Page:** {page_url}")
-
-                def extract_all_text(data, prioritized_keys=None):
-                    # Recursively extract all non-empty text from prioritized fields, fallback to all text
-                    if prioritized_keys is None:
-                        prioritized_keys = ['chunks', 'content', 'headers', 'faqs_clean']
-                    texts = []
-                    def _extract(obj):
-                        if isinstance(obj, dict):
-                            for k, v in obj.items():
-                                if k in prioritized_keys:
-                                    _extract(v)
-                                elif isinstance(v, (dict, list)):
-                                    _extract(v)
-                                elif isinstance(v, str) and v.strip():
-                                    texts.append(v.strip())
-                        elif isinstance(obj, list):
-                            for item in obj:
-                                _extract(item)
-                        elif isinstance(obj, str) and obj.strip():
-                            texts.append(obj.strip())
-                    # First try prioritized keys
-                    for key in prioritized_keys:
-                        if key in data:
-                            _extract(data[key])
-                    # If still empty, fallback to all text in the structure
-                    if not texts:
-                        _extract(data)
-                    return '\n'.join(texts)
-
-                cleaned_text = extract_all_text(page_data)
-
-                with st.expander(f"Show cleaned text sent to LLM for {page_url}", expanded=False):
-                    st.write("--- Cleaned Data Structure ---")
-                    st.json(page_data)
-                    st.write("--- Cleaned Text Sent to LLM ---")
-                    st.write(cleaned_text if cleaned_text else "(No text found)")
-                llm_btn = st.button(f"Extract Intents with LLM", key=f"llm_extract_{url_hash}")
-                if llm_btn:
-                    if not cleaned_text:
-                        st.warning("No cleaned text found for this page. Cannot extract intents.")
-                    else:
-                        try:
-                            llm_result = llm_processor.analyze_contact_center_intents(cleaned_text)
-                            st.markdown("### LLM-Extracted Intents Table")
-                            if llm_result and 'intent_map' in llm_result:
-                                st.markdown(llm_result['intent_map'])
-                                with st.expander("Show LLM Prompt", expanded=False):
-                                    st.code(llm_result.get('llm_prompt', ''), language='markdown')
-                            else:
-                                st.warning("No intent map returned by LLM.")
-                        except Exception as e:
-                            st.error(f"LLM extraction failed: {str(e)}")
+                    st.success(f"Successfully crawled and cleaned {len(pages)} pages")
+                    
+                    # Process each page through the pipeline
+                    st.subheader("Processing Pages")
+                    for page_url, page_data in pages.items():
+                        with st.expander(f"Processing {page_url}"):
+                            try:
+                                # Run the pipeline asynchronously
+                                pipeline_result = await pipeline.run({
+                                    'page_data': page_data,
+                                    'analysis_type': 'contact_center'
+                                })
+                                
+                                if pipeline_result.success:
+                                    st.success("Analysis completed successfully")
+                                    # Store the results
+                                    if 'analyzed_intents' not in st.session_state:
+                                        st.session_state.analyzed_intents = []
+                                    st.session_state.analyzed_intents.append(pipeline_result.data)
+                                else:
+                                    st.error(f"Analysis failed: {pipeline_result.error}")
+                                
+                            except Exception as e:
+                                logger.error(f"Error processing {page_url}: {str(e)}")
+                                st.error(f"Error processing {page_url}: {str(e)}")
+                                continue
+                    
+                    # Display results
+                    if st.session_state.analyzed_intents:
+                        st.header("Analysis Results")
+                        for intent in st.session_state.analyzed_intents:
+                            display_intent_analysis(intent)
+                else:
+                    st.error("No pages could be successfully crawled")
         else:
-            st.header("Raw Scraped Data Preview")
-            for page_url, page_data in st.session_state.pages.items():
-                with st.expander(f"{page_url}"):
-                    st.write("**Metadata:**")
-                    st.json(page_data.get('metadata', {}))
-                    st.write("**Structure:**")
-                    st.json(page_data.get('structure', {}))
-                    st.write("**Navigation:**")
-                    st.json(page_data.get('navigation', {}))
-                    import json
-                    import hashlib
-                    raw_json = json.dumps(page_data, indent=2, ensure_ascii=False)
-                    url_hash = hashlib.md5(page_url.encode('utf-8')).hexdigest()
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        if st.button(f"Save JSON", key=f"save_json_{url_hash}_raw"):
-                            import datetime
-                            import os
-                            safe_url = page_url.replace('https://', '').replace('http://', '').replace('/', '_')
-                            filename = f"scraped_{safe_url}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-                            save_path = os.path.join('crawl_results', filename)
-                            os.makedirs('crawl_results', exist_ok=True)
-                            with open(save_path, 'w', encoding='utf-8') as f:
-                                f.write(raw_json)
-                            st.success(f"Saved to {save_path}")
-                    with col2:
-                        st.code(raw_json, language='json')
-                        st.caption("You can copy the above JSON using the copy button in the code block.")
+            st.warning("Please enter URLs or select URLs from the sitemap")
 
-    # Intent analysis section
-    if st.session_state.analyzed_intents:
-        st.header("Intent Analysis Results")
-        for intent in st.session_state.analyzed_intents:
-            display_intent_analysis(intent)
-    
     # Contact center intent map section
     if st.session_state.analyzed_intents:
         st.header("Contact Center Intent Map")
@@ -539,4 +417,4 @@ def main():
                 display_contact_center_intent_map(intent['intent_map'])
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
