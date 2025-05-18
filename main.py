@@ -331,8 +331,8 @@ def clean_scraped_data(page_data: dict) -> dict:
     return page_data
 
 def main():
-    st.write(':green-background[App loaded! If you see this, the UI is rendering and waiting for your input.]')
-    st.title("Web Page Intent Analysis")
+    # st.write(':green-background[App loaded! If you see this, the UI is rendering and waiting for your input.]')
+    st.title("Intent Scraper")
     
     # Initialize components
     crawler = WebsiteCrawler()

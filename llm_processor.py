@@ -349,8 +349,9 @@ Analyze and extract all insights using this structure:
             logger.info("Generating intent hierarchy")
             logger.debug(f"Number of texts to process: {len(texts)}")
 
-            prompt = f"""Analyze the following texts and create a hierarchical structure of user intents.
-            Return a JSON object with the following structure:
+            prompt = f"""Analyze the following texts and create a hierarchical structure of user intents. Be exhaustive: enumerate every possible user intent, sub-intent, and user goal that can be reasonably inferred from the content. Do not omit any plausible intent, even if it seems minor or niche. For each intent, provide supporting text or evidence from the content. If there are overlapping or related intents, list them all. Your analysis should be as comprehensive and granular as possible.
+
+Return a JSON object with the following structure:
             {{
                 "primary_intent": "main purpose or goal",
                 "sub_intents": [
