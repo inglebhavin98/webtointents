@@ -2,7 +2,7 @@ import logging
 import openai
 import os
 from dotenv import load_dotenv
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Union
 import json
 import uuid
 
@@ -616,15 +616,19 @@ Return a JSON object with the following structure:
             logger.error(f"Error generating intent hierarchy: {str(e)}")
             return None
 
-    def analyze_contact_center_intents(self, page_data: Dict[str, Any]) -> Dict[str, Any]:
+    def analyze_contact_center_intents(self, content: Union[str, Dict[str, Any]]) -> Dict[str, Any]:
         """Advanced intent analysis for contact center transformation."""
         try:
-            if not page_data:
-                logger.error("Invalid page data for intent analysis")
+            if not content:
+                logger.error("Invalid content for intent analysis")
                 return None
 
-            # Construct content from page data
-            content = self._prepare_content_for_analysis(page_data)
+            # If content is a dictionary, prepare it for analysis
+            if isinstance(content, dict):
+                content = self._prepare_content_for_analysis(content)
+                if not content:
+                    logger.error("Failed to prepare content for analysis")
+                    return None
             
             prompt = f"""You are an Intent Discovery Expert helping a contact center transformation team.
 
@@ -633,7 +637,7 @@ Given the following structured website content, analyze and return a comprehensi
 Content to analyze:
 {content}
 
-Return your analysis in this JSON structure:
+IMPORTANT: You must return a valid JSON object with the following structure. Do not include any other text or explanation:
 
 {{
     "high_level_summary": {{
@@ -681,11 +685,14 @@ Return your analysis in this JSON structure:
     ]
 }}
 
-Important:
-1. Only use information present in the provided content
-2. Do not make assumptions or add information not in the source
-3. Provide confidence scores where relevant
-4. Link all insights to specific content signals"""
+Rules:
+1. Return ONLY the JSON object, no other text
+2. Ensure all JSON is properly formatted with double quotes
+3. Include all required fields
+4. Use only information present in the provided content
+5. Do not make assumptions or add information not in the source
+6. Provide confidence scores between 0.0 and 1.0
+7. Link all insights to specific content signals"""
 
             logger.info("Sending request to OpenRouter for contact center intent analysis")
             completion = openai.ChatCompletion.create(
@@ -697,86 +704,43 @@ Important:
                 messages=[
                     {
                         "role": "system",
-                        "content": "You are an expert intent discovery analyst specializing in contact center transformation."
+                        "content": "You are an expert intent discovery analyst specializing in contact center transformation. You must always return valid JSON."
                     },
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.3
             )
 
-            response = completion.choices[0].message.content
+            response = completion.choices[0].message.content.strip()
             logger.info("Received contact center intent analysis")
+            logger.debug(f"Raw response: {response}")
+
+            # Try to clean the response if it's not valid JSON
+            if not response.startswith('{'):
+                # Find the first occurrence of '{'
+                start_idx = response.find('{')
+                if start_idx != -1:
+                    response = response[start_idx:]
+                    # Find the last occurrence of '}'
+                    end_idx = response.rfind('}')
+                    if end_idx != -1:
+                        response = response[:end_idx + 1]
 
             try:
                 analysis = json.loads(response)
+                # Validate the structure
+                required_keys = ['high_level_summary', 'core_intents', 'feature_intent_mapping', 'sub_intents', 'link_clusters']
+                if not all(key in analysis for key in required_keys):
+                    logger.error(f"Missing required keys in analysis. Found: {list(analysis.keys())}")
+                    return None
                 return analysis
             except json.JSONDecodeError as e:
                 logger.error(f"Error parsing intent analysis JSON: {str(e)}")
+                logger.error(f"Invalid JSON response: {response}")
                 return None
 
         except Exception as e:
             logger.error(f"Error in contact center intent analysis: {str(e)}")
-            return None
-
-    def analyze_contact_center_intents(self, html_content: str) -> dict:
-        """
-        Specialized analysis for contact center transformation: returns a structured Intent Map
-        following the user's detailed prompt.
-        """
-        try:
-            if not html_content or not isinstance(html_content, str):
-                logger.error("Invalid HTML content for contact center intent analysis")
-                return None
-
-            prompt = f"""
-You are an Intent Discovery Expert helping a contact center transformation team.
-
-You are given structured HTML content from a product website, including headers, paragraphs, titles, testimonials, and internal/external links.
-
-Your goal is to analyze this content and return a structured \"Intent Map\" that captures what a user visiting this website may want to do.
-
-**IMPORTANT: Your output must include a markdown table with the following columns:**
-| Intent Name | User Goal | Sample Phrases | Source Context |
-
-- For each intent, fill out all columns:
-    - **Intent Name**: What the user wants to do (short phrase)
-    - **User Goal**: A 1-sentence description of the user's goal for this intent
-    - **Sample Phrases**: 2-3 example user utterances (in quotes, comma-separated)
-    - **Source Context**: The section, header, or page context where this intent is found (e.g., "Pharmacy > Refills")
-
-**Example:**
-| Intent Name | User Goal | Sample Phrases | Source Context |
-|-------------|----------|---------------|---------------|
-
-**Rules:**
-- Do **not** make up any information.
-- Only use what is present in the content.
-- If unsure, leave a cell blank.
-- Respond only with the markdown table and any additional notes if needed.
-- **Do NOT use or copy any information from the example table above. Only use information found in the Content section below.**
-
-**Content:**
-{html_content}
-"""
-            logger.info("Sending specialized contact center intent prompt to LLM...")
-            logger.debug(f"Prompt sent to LLM:\n{prompt}")
-            completion = openai.ChatCompletion.create(
-                headers={
-                    "HTTP-Referer": self.site_url,
-                    "X-Title": self.site_name,
-                },
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": "You are an Intent Discovery Expert for contact center transformation."},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.3
-            )
-            response = completion.choices[0].message.content
-            logger.info("Received Intent Map from LLM")
-            return {"intent_map": response, "llm_prompt": prompt}
-        except Exception as e:
-            logger.error(f"Error in analyze_contact_center_intents: {str(e)}")
             return None
 
     def _prepare_content_for_analysis(self, page_data: Dict[str, Any]) -> str:

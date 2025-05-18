@@ -10,6 +10,8 @@ import xml.etree.ElementTree as ET
 from io import StringIO
 from typing import Dict, Any
 from collections import defaultdict
+from sitemap_handler import SitemapHandler
+from datetime import datetime
 
 # Configure logging
 logging.basicConfig(
@@ -20,6 +22,63 @@ logger = logging.getLogger(__name__)
 
 # Load environment variables
 load_dotenv()
+
+def save_crawled_data(data, urls):
+    """Save crawled data to disk."""
+    try:
+        # Create data directory if it doesn't exist
+        os.makedirs('crawled_data', exist_ok=True)
+        
+        # Create a timestamp for the filename
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        # Create a filename based on the first URL
+        first_url = next(iter(urls)) if urls else "unknown"
+        safe_filename = first_url.replace('https://', '').replace('http://', '').replace('/', '_')
+        filename = f"crawl_{timestamp}_{safe_filename}.json"
+        
+        # Prepare the data for storage
+        storage_data = {
+            'metadata': {
+                'timestamp': timestamp,
+                'urls': list(urls),
+                'total_urls': len(urls),
+                'successful_crawls': len(data)
+            },
+            'crawled_data': data
+        }
+        
+        # Save to file
+        filepath = os.path.join('crawled_data', filename)
+        with open(filepath, 'w', encoding='utf-8') as f:
+            json.dump(storage_data, f, indent=2, ensure_ascii=False)
+        
+        logger.info(f"Saved crawled data to {filepath}")
+        return filepath
+    except Exception as e:
+        logger.error(f"Error saving crawled data: {str(e)}")
+        return None
+
+def load_crawled_data(filepath):
+    """Load crawled data from disk."""
+    try:
+        with open(filepath, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        logger.info(f"Loaded crawled data from {filepath}")
+        return data
+    except Exception as e:
+        logger.error(f"Error loading crawled data: {str(e)}")
+        return None
+
+def list_crawled_data():
+    """List all available crawled data files."""
+    try:
+        if not os.path.exists('crawled_data'):
+            return []
+        return [f for f in os.listdir('crawled_data') if f.endswith('.json')]
+    except Exception as e:
+        logger.error(f"Error listing crawled data: {str(e)}")
+        return []
 
 def initialize_components():
     """Initialize all required components with proper error handling."""
@@ -330,213 +389,396 @@ def clean_scraped_data(page_data: dict) -> dict:
 
     return page_data
 
+def initialize_session_state():
+    """Initialize session state variables."""
+    try:
+        if 'crawled_data' not in st.session_state:
+            st.session_state.crawled_data = []
+        if 'selected_urls' not in st.session_state:
+            st.session_state.selected_urls = set()
+        if 'url_hierarchy' not in st.session_state:
+            st.session_state.url_hierarchy = None
+        if 'total_urls' not in st.session_state:
+            st.session_state.total_urls = 0
+        if 'selected_count' not in st.session_state:
+            st.session_state.selected_count = 0
+        if 'checkbox_states' not in st.session_state:
+            st.session_state.checkbox_states = {}
+        if 'url_to_key_map' not in st.session_state:
+            st.session_state.url_to_key_map = {}
+        
+        # Ensure selected_count matches selected_urls
+        st.session_state.selected_count = len(st.session_state.selected_urls)
+        
+        logger.debug(f"Session state initialized. Selected URLs: {st.session_state.selected_urls}, Count: {st.session_state.selected_count}")
+    except Exception as e:
+        logger.error(f"Error initializing session state: {str(e)}")
+        st.error("Error initializing application state. Please refresh the page.")
+
+def update_selection(key):
+    """Callback function to update selected URLs and counter."""
+    try:
+        is_selected = st.session_state[key]
+        url = st.session_state[f'url_for_{key}']
+        
+        if is_selected:
+            st.session_state.selected_urls.add(url)
+        else:
+            st.session_state.selected_urls.discard(url)
+        
+        # Update the counter
+        st.session_state.selected_count = len(st.session_state.selected_urls)
+        logger.debug(f"Updated selection for URL {url}. Selected URLs: {st.session_state.selected_urls}, Count: {st.session_state.selected_count}")
+    except Exception as e:
+        logger.error(f"Error in update_selection: {str(e)}")
+        st.error("Error updating selection. Please try again.")
+
+def update_node_selection(key):
+    """Callback function to update all URLs in a node."""
+    try:
+        is_selected = st.session_state[key]
+        urls = st.session_state[f'urls_for_{key}']
+        
+        if is_selected:
+            st.session_state.selected_urls.update(urls)
+            # Update all child checkboxes
+            for url in urls:
+                if url in st.session_state.url_to_key_map:
+                    checkbox_key = st.session_state.url_to_key_map[url]
+                    st.session_state.checkbox_states[checkbox_key] = True
+        else:
+            st.session_state.selected_urls.difference_update(urls)
+            # Update all child checkboxes
+            for url in urls:
+                if url in st.session_state.url_to_key_map:
+                    checkbox_key = st.session_state.url_to_key_map[url]
+                    st.session_state.checkbox_states[checkbox_key] = False
+        
+        # Update the counter
+        st.session_state.selected_count = len(st.session_state.selected_urls)
+        logger.debug(f"Updated node selection. Selected URLs: {st.session_state.selected_urls}, Count: {st.session_state.selected_count}")
+    except Exception as e:
+        logger.error(f"Error in update_node_selection: {str(e)}")
+        st.error("Error updating node selection. Please try again.")
+
+def render_url_tree(node, parent_key=''):
+    """Render a URL tree node with checkboxes."""
+    current_key = f"{parent_key}_{node['id']}" if parent_key else node['id']
+    
+    # Create columns for checkbox and label
+    col1, col2 = st.columns([1, 4])
+    
+    with col1:
+        # Store node URLs in session state
+        node_checkbox_key = f"check_{current_key}"
+        node_urls = node.get('urls', [])
+        st.session_state[f'urls_for_{node_checkbox_key}'] = node_urls
+        
+        # Calculate if all URLs in this node are selected
+        all_selected = all(url in st.session_state.selected_urls for url in node_urls)
+        
+        # Initialize checkbox state if not exists
+        if node_checkbox_key not in st.session_state.checkbox_states:
+            st.session_state.checkbox_states[node_checkbox_key] = False
+        
+        # Checkbox state for the node itself
+        checked = st.checkbox(
+            ' ',
+            key=node_checkbox_key,
+            value=all_selected,
+            on_change=update_node_selection,
+            args=(node_checkbox_key,),
+            label_visibility="collapsed"
+        )
+        st.session_state.checkbox_states[node_checkbox_key] = checked
+    
+    with col2:
+        st.write(node['label'])
+        if node_urls:
+            with st.expander("View URLs"):
+                for url in node_urls:
+                    # Create a checkbox for each URL
+                    url_checkbox_key = f"url_{current_key}_{url}"
+                    st.session_state[f'url_for_{url_checkbox_key}'] = url
+                    st.session_state.url_to_key_map[url] = url_checkbox_key
+                    
+                    # Initialize checkbox state if not exists
+                    if url_checkbox_key not in st.session_state.checkbox_states:
+                        st.session_state.checkbox_states[url_checkbox_key] = False
+                    
+                    # Check if this URL is currently selected
+                    is_url_selected = url in st.session_state.selected_urls
+                    
+                    url_checked = st.checkbox(
+                        url,
+                        key=url_checkbox_key,
+                        value=is_url_selected,
+                        on_change=update_selection,
+                        args=(url_checkbox_key,)
+                    )
+                    st.session_state.checkbox_states[url_checkbox_key] = url_checked
+    
+    # Render children
+    for child in node.get('children', []):
+        render_url_tree(child, current_key)
+
 def main():
-    # st.write(':green-background[App loaded! If you see this, the UI is rendering and waiting for your input.]')
-    st.title("Intent Scraper")
+    st.title("Web Intent Discovery Tool")
+    initialize_session_state()
     
     # Initialize components
-    crawler = WebsiteCrawler()
     llm_processor, intent_generator = initialize_components()
-    if not all([llm_processor, intent_generator]):
-        st.error("Failed to initialize required components. Please check the logs for details.")
+    if not llm_processor or not intent_generator:
+        st.error("Failed to initialize components. Please check the logs.")
         return
     
-    # Initialize session state
-    if 'analyzed_intents' not in st.session_state:
-        st.session_state.analyzed_intents = []
-    if 'parsed_urls' not in st.session_state:
-        st.session_state.parsed_urls = []
+    crawler = WebsiteCrawler()
+    sitemap_handler = SitemapHandler()
     
-    # URL input and sitemap upload interface
-    url = st.text_input("Enter URL to analyze")
-    uploaded_file = st.file_uploader("Or upload a sitemap", type=['xml'])
+    # Add a tab for viewing previous crawls
+    tab1, tab2 = st.tabs(["Crawl New URLs", "View Previous Crawls"])
     
-    # Parse sitemap if uploaded
-    if uploaded_file and st.button("Parse Sitemap"):
-        st.session_state.parsed_urls = parse_uploaded_sitemap(uploaded_file)
-        if st.session_state.parsed_urls:
-            st.success(f"Successfully parsed {len(st.session_state.parsed_urls)} URLs from sitemap")
-    
-    # Display URL selection if URLs are parsed
-    if st.session_state.parsed_urls:
-        st.subheader("Select URLs to Analyze")
-        selected_urls = st.multiselect(
-            "Choose URLs to analyze",
-            st.session_state.parsed_urls,
-            default=st.session_state.parsed_urls[:5]  # Default to first 5 URLs
+    with tab1:
+        # Input method selection
+        input_method = st.radio(
+            "Select input method:",
+            ["Single URL", "Sitemap"]
         )
-        st.write(f"Selected {len(selected_urls)} URLs for analysis")
-    
-    if st.button("Start Analysis"):
-        if url or selected_urls:
-            with st.spinner("Crawling pages..."):
-                pages = {}
+        
+        if input_method == "Single URL":
+            # Original single URL input
+            url = st.text_input("Enter URL to crawl:")
+            if st.button("Crawl URL"):
                 if url:
-                    # Crawl single URL
-                    page_data = crawler.crawl_url(url)
-                    if page_data:
-                        pages[url] = page_data
-                else:
-                    # Crawl selected URLs from sitemap
-                    progress_bar = st.progress(0)
-                    for i, url in enumerate(selected_urls):
+                    with st.spinner("Crawling URL..."):
                         try:
-                            logger.info(f"Crawling URL: {url}")
-                            with st.spinner(f"Crawling {url}..."):
-                                page_data = crawler.crawl_url(url)
-                                if page_data:
-                                    pages[url] = page_data
-                            progress_bar.progress((i + 1) / len(selected_urls))
+                            page_data = crawler.crawl_url(url)
+                            if page_data:
+                                st.session_state.crawled_data = [page_data]
+                                # Save the crawled data
+                                save_crawled_data([page_data], {url})
+                                st.success("Page crawled successfully!")
                         except Exception as e:
-                            logger.error(f"Error crawling {url}: {str(e)}")
-                            continue
-                if pages:
-                    st.session_state.pages = pages
-                    st.session_state.cleaned_pages = None
-                    st.session_state.show_cleaned = False
-                    st.success(f"Successfully crawled {len(pages)} pages")
-
-    # Show cleaning CTA and previews if pages are in session state
-    if 'pages' in st.session_state and st.session_state.pages:
-        # Clean Scraped Data button
-        if st.button("Clean Scraped Data"):
-            cleaned_pages = {}
-            for page_url, page_data in st.session_state.pages.items():
-                cleaned_pages[page_url] = clean_scraped_data(page_data)
-            st.session_state.cleaned_pages = cleaned_pages
-            st.session_state.show_cleaned = True
-
-        # Show cleaned or raw preview based on state
-        if st.session_state.get('show_cleaned') and st.session_state.get('cleaned_pages'):
-            st.header("Cleaned Scraped Data Preview")
-            for page_url, page_data in st.session_state.cleaned_pages.items():
-                with st.expander(f"{page_url}"):
-                    st.write("**Metadata:**")
-                    st.json(page_data.get('metadata', {}))
-                    st.write("**Structure:**")
-                    st.json(page_data.get('structure', {}))
-                    st.write("**Navigation:**")
-                    st.json(page_data.get('navigation', {}))
-                    import json
-                    import hashlib
-                    raw_json = json.dumps(page_data, indent=2, ensure_ascii=False)
-                    url_hash = hashlib.md5(page_url.encode('utf-8')).hexdigest()
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        if st.button(f"Save JSON", key=f"save_json_{url_hash}_cleaned"):
-                            import datetime
-                            import os
-                            safe_url = page_url.replace('https://', '').replace('http://', '').replace('/', '_')
-                            filename = f"scraped_{safe_url}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-                            save_path = os.path.join('crawl_results', filename)
-                            os.makedirs('crawl_results', exist_ok=True)
-                            with open(save_path, 'w', encoding='utf-8') as f:
-                                f.write(raw_json)
-                            st.success(f"Saved to {save_path}")
-                    with col2:
-                        st.code(raw_json, language='json')
-                        st.caption("You can copy the above JSON using the copy button in the code block.")
-
-            # --- LLM Intent Extraction Section (now below the cleaned data preview) ---
-            st.markdown("---")
-            st.subheader("LLM Intent Extraction")
-            for page_url, page_data in st.session_state.cleaned_pages.items():
-                url_hash = hashlib.md5(page_url.encode('utf-8')).hexdigest()
-                st.markdown(f"**Page:** {page_url}")
-
-                def extract_all_text(data, prioritized_keys=None):
-                    # Recursively extract all non-empty text from prioritized fields, fallback to all text
-                    if prioritized_keys is None:
-                        prioritized_keys = ['chunks', 'content', 'headers', 'faqs_clean']
-                    texts = []
-                    def _extract(obj):
-                        if isinstance(obj, dict):
-                            for k, v in obj.items():
-                                if k in prioritized_keys:
-                                    _extract(v)
-                                elif isinstance(v, (dict, list)):
-                                    _extract(v)
-                                elif isinstance(v, str) and v.strip():
-                                    texts.append(v.strip())
-                        elif isinstance(obj, list):
-                            for item in obj:
-                                _extract(item)
-                        elif isinstance(obj, str) and obj.strip():
-                            texts.append(obj.strip())
-                    # First try prioritized keys
-                    for key in prioritized_keys:
-                        if key in data:
-                            _extract(data[key])
-                    # If still empty, fallback to all text in the structure
-                    if not texts:
-                        _extract(data)
-                    return '\n'.join(texts)
-
-                cleaned_text = extract_all_text(page_data)
-
-                with st.expander(f"Show cleaned text sent to LLM for {page_url}", expanded=False):
-                    st.write("--- Cleaned Data Structure ---")
-                    st.json(page_data)
-                    st.write("--- Cleaned Text Sent to LLM ---")
-                    st.write(cleaned_text if cleaned_text else "(No text found)")
-                llm_btn = st.button(f"Extract Intents with LLM", key=f"llm_extract_{url_hash}")
-                if llm_btn:
-                    if not cleaned_text:
-                        st.warning("No cleaned text found for this page. Cannot extract intents.")
-                    else:
+                            st.error(f"Error crawling page: {str(e)}")
+        
+        else:  # Sitemap input
+            st.subheader("Sitemap Input")
+            sitemap_input = st.text_area(
+                "Enter sitemap URL or paste sitemap XML content:",
+                height=100
+            )
+            
+            uploaded_file = st.file_uploader("Or upload a sitemap.xml file:", type=['xml'])
+            
+            if st.button("Process Sitemap"):
+                if sitemap_input or uploaded_file:
+                    with st.spinner("Processing sitemap..."):
                         try:
-                            llm_result = llm_processor.analyze_contact_center_intents(cleaned_text)
-                            st.markdown("### LLM-Extracted Intents Table")
-                            if llm_result and 'intent_map' in llm_result:
-                                st.markdown(llm_result['intent_map'])
-                                with st.expander("Show LLM Prompt", expanded=False):
-                                    st.code(llm_result.get('llm_prompt', ''), language='markdown')
+                            # Clear previous selections when processing new sitemap
+                            st.session_state.selected_urls = set()
+                            st.session_state.selected_count = 0
+                            st.session_state.checkbox_states = {}
+                            st.session_state.url_to_key_map = {}
+                            
+                            if uploaded_file:
+                                urls = parse_uploaded_sitemap(uploaded_file)
+                                result = sitemap_handler.process_sitemap('\n'.join(urls))
                             else:
-                                st.warning("No intent map returned by LLM.")
+                                result = sitemap_handler.process_sitemap(sitemap_input)
+                                
+                            st.session_state.url_hierarchy = result['hierarchy']
+                            st.session_state.total_urls = result['total_urls']
+                            st.success(f"Found {result['total_urls']} URLs in sitemap")
                         except Exception as e:
-                            st.error(f"LLM extraction failed: {str(e)}")
-        else:
-            st.header("Raw Scraped Data Preview")
-            for page_url, page_data in st.session_state.pages.items():
-                with st.expander(f"{page_url}"):
-                    st.write("**Metadata:**")
-                    st.json(page_data.get('metadata', {}))
-                    st.write("**Structure:**")
-                    st.json(page_data.get('structure', {}))
-                    st.write("**Navigation:**")
-                    st.json(page_data.get('navigation', {}))
-                    import json
-                    import hashlib
-                    raw_json = json.dumps(page_data, indent=2, ensure_ascii=False)
-                    url_hash = hashlib.md5(page_url.encode('utf-8')).hexdigest()
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        if st.button(f"Save JSON", key=f"save_json_{url_hash}_raw"):
-                            import datetime
-                            import os
-                            safe_url = page_url.replace('https://', '').replace('http://', '').replace('/', '_')
-                            filename = f"scraped_{safe_url}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-                            save_path = os.path.join('crawl_results', filename)
-                            os.makedirs('crawl_results', exist_ok=True)
-                            with open(save_path, 'w', encoding='utf-8') as f:
-                                f.write(raw_json)
-                            st.success(f"Saved to {save_path}")
-                    with col2:
-                        st.code(raw_json, language='json')
-                        st.caption("You can copy the above JSON using the copy button in the code block.")
-
-    # Intent analysis section
-    if st.session_state.analyzed_intents:
-        st.header("Intent Analysis Results")
-        for intent in st.session_state.analyzed_intents:
-            display_intent_analysis(intent)
+                            st.error(f"Error processing sitemap: {str(e)}")
+                else:
+                    st.warning("Please provide either a sitemap URL/content or upload a sitemap file")
+            
+            # Display URL selection tree if hierarchy exists
+            if st.session_state.url_hierarchy:
+                st.subheader("Select URLs to crawl")
+                
+                # URL selection controls
+                col1, col2 = st.columns([1, 3])
+                with col1:
+                    if st.button("Select All"):
+                        all_urls = set()
+                        for node in st.session_state.url_hierarchy:
+                            all_urls.update(node['urls'])
+                        st.session_state.selected_urls = all_urls
+                        st.session_state.selected_count = len(all_urls)
+                        # Update all checkbox states
+                        for key in st.session_state.checkbox_states:
+                            st.session_state.checkbox_states[key] = True
+                        st.rerun()
+                
+                with col2:
+                    st.write(f"Selected URLs: {st.session_state.selected_count} / {st.session_state.total_urls}")
+                
+                # Render URL tree
+                for node in st.session_state.url_hierarchy:
+                    render_url_tree(node)
+                
+                # Crawl selected URLs
+                if st.button("Crawl Selected URLs"):
+                    if st.session_state.selected_urls:
+                        with st.spinner("Crawling selected URLs..."):
+                            try:
+                                crawled_data = []
+                                progress_bar = st.progress(0)
+                                total_urls = len(st.session_state.selected_urls)
+                                
+                                for i, url in enumerate(st.session_state.selected_urls):
+                                    try:
+                                        logger.info(f"Crawling URL {i+1}/{total_urls}: {url}")
+                                        page_data = crawler.crawl_url(url)
+                                        if page_data and isinstance(page_data, dict):
+                                            # Clean the scraped data before storing
+                                            cleaned_data = clean_scraped_data(page_data)
+                                            if cleaned_data:
+                                                crawled_data.append(cleaned_data)
+                                                logger.info(f"Successfully crawled and cleaned data for {url}")
+                                            else:
+                                                logger.warning(f"No valid data after cleaning for {url}")
+                                        else:
+                                            logger.warning(f"Invalid or empty data received for {url}")
+                                    except Exception as e:
+                                        logger.error(f"Error crawling {url}: {str(e)}")
+                                        continue
+                                    
+                                    progress_bar.progress((i + 1) / total_urls)
+                                
+                                if crawled_data:
+                                    st.session_state.crawled_data = crawled_data
+                                    # Save the crawled data
+                                    save_path = save_crawled_data(crawled_data, st.session_state.selected_urls)
+                                    if save_path:
+                                        st.success(f"Successfully crawled {len(crawled_data)} out of {total_urls} pages! Data saved to {save_path}")
+                                    else:
+                                        st.success(f"Successfully crawled {len(crawled_data)} out of {total_urls} pages!")
+                                    
+                                    # Display summary of crawled data
+                                    st.subheader("Crawl Summary")
+                                    st.write(f"Total URLs attempted: {total_urls}")
+                                    st.write(f"Successfully crawled: {len(crawled_data)}")
+                                    st.write(f"Failed: {total_urls - len(crawled_data)}")
+                                else:
+                                    st.error("No valid data was collected from any of the URLs")
+                            except Exception as e:
+                                logger.error(f"Error during crawling process: {str(e)}")
+                                st.error(f"Error crawling pages: {str(e)}")
+                    else:
+                        st.warning("Please select at least one URL to crawl")
     
-    # Contact center intent map section
-    if st.session_state.analyzed_intents:
-        st.header("Contact Center Intent Map")
-        for intent in st.session_state.analyzed_intents:
-            if 'intent_map' in intent:
-                display_contact_center_intent_map(intent['intent_map'])
+    with tab2:
+        st.subheader("Previous Crawls")
+        crawled_files = list_crawled_data()
+        if crawled_files:
+            selected_file = st.selectbox("Select a crawl file:", crawled_files)
+            if selected_file:
+                filepath = os.path.join('crawled_data', selected_file)
+                data = load_crawled_data(filepath)
+                if data:
+                    st.write("Crawl Metadata:")
+                    st.json(data['metadata'])
+                    
+                    if st.button("Load This Data"):
+                        st.session_state.crawled_data = data['crawled_data']
+                        st.success("Data loaded successfully!")
+                else:
+                    st.error("Error loading crawl data")
+        else:
+            st.info("No previous crawls found")
+    
+    # Process crawled data
+    if st.session_state.crawled_data:
+        st.subheader("Process Pages")
+        analysis_type = st.radio(
+            "Select analysis type:",
+            ["Standard Intent Analysis", "Contact Center Intent Map"]
+        )
+        
+        if st.button("Process Pages"):
+            with st.spinner("Processing pages..."):
+                try:
+                    if analysis_type == "Standard Intent Analysis":
+                        hierarchy = intent_generator.generate_intent_hierarchy(st.session_state.crawled_data)
+                        
+                        # Display results
+                        st.subheader("Intent Hierarchy")
+                        st.json(hierarchy)
+                        
+                        # Export options
+                        export_format = st.selectbox("Export format:", ["JSON", "CSV"])
+                        if st.button("Export"):
+                            exported_data = intent_generator.export_intents(hierarchy, export_format.lower())
+                            st.download_button(
+                                "Download",
+                                exported_data,
+                                file_name=f"intents.{export_format.lower()}",
+                                mime="application/json" if export_format == "JSON" else "text/csv"
+                            )
+                    else:
+                        # Contact center intent map
+                        successful_analyses = 0
+                        st.write("Starting analysis of crawled pages...")
+                        
+                        for i, page_data in enumerate(st.session_state.crawled_data):
+                            try:
+                                logger.info(f"Processing page {i+1}/{len(st.session_state.crawled_data)}")
+                                
+                                # Validate page data
+                                if not isinstance(page_data, dict):
+                                    logger.error(f"Invalid page data type for page {i+1}: {type(page_data)}")
+                                    continue
+                                
+                                # Log the structure of the page data
+                                logger.debug(f"Page data structure for page {i+1}: {list(page_data.keys())}")
+                                
+                                # Check for required fields
+                                required_fields = ['url', 'metadata', 'structure']
+                                missing_fields = [field for field in required_fields if field not in page_data]
+                                if missing_fields:
+                                    logger.error(f"Missing required fields for page {i+1}: {missing_fields}")
+                                    continue
+                                
+                                # Log the content being analyzed
+                                logger.debug(f"Analyzing content for URL: {page_data.get('url', 'unknown')}")
+                                
+                                # Prepare content for analysis
+                                content = llm_processor._prepare_content_for_analysis(page_data)
+                                if not content:
+                                    logger.error(f"Failed to prepare content for analysis for page {i+1}")
+                                    continue
+                                
+                                # Attempt to analyze the page
+                                intent_map = llm_processor.analyze_contact_center_intents(content)
+                                
+                                if intent_map:
+                                    logger.info(f"Successfully generated intent map for page {i+1}")
+                                    display_contact_center_intent_map(intent_map)
+                                    successful_analyses += 1
+                                else:
+                                    logger.warning(f"No intent map generated for page {i+1}")
+                                    st.warning(f"Could not analyze page {i+1}: {page_data.get('url', 'unknown')}")
+                            except Exception as e:
+                                logger.error(f"Error processing page {i+1}: {str(e)}")
+                                st.error(f"Error analyzing page {i+1}: {str(e)}")
+                                continue
+                        
+                        if successful_analyses == 0:
+                            st.error("No pages could be successfully analyzed. Please check the logs for details.")
+                            # Display debug information
+                            st.subheader("Debug Information")
+                            st.write("Number of pages attempted:", len(st.session_state.crawled_data))
+                            st.write("Sample of first page data structure:", 
+                                   {k: type(v) for k, v in st.session_state.crawled_data[0].items()} 
+                                   if st.session_state.crawled_data else "No data available")
+                        else:
+                            st.success(f"Successfully analyzed {successful_analyses} out of {len(st.session_state.crawled_data)} pages")
+                except Exception as e:
+                    logger.error(f"Error processing pages: {str(e)}")
+                    st.error(f"Error processing pages: {str(e)}")
 
 if __name__ == "__main__":
     main()
