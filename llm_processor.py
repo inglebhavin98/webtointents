@@ -18,7 +18,8 @@ class LLMProcessor:
             self.api_key = os.getenv('OPENROUTER_API_KEY')
             self.site_url = os.getenv('SITE_URL', 'http://localhost:8501')
             self.site_name = os.getenv('SITE_NAME', 'Intent Discovery Tool')
-            self.model = "qwen/qwen3-0.6b-04-28:free"
+            # self.model = "qwen/qwen3-0.6b-04-28:free"
+            self.model = "meta-llama/llama-3.3-8b-instruct:free"
             
             if not self.api_key:
                 raise ValueError("OPENROUTER_API_KEY not found in environment variables")
