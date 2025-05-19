@@ -353,14 +353,22 @@ def main():
 
     # Parse multi-URL input
     urls = []
-    if url_input:
-        urls = [u.strip() for u in url_input.split(',') if u.strip()]
-
-    # Parse sitemap if uploaded
+    # If sitemap is uploaded and parsed, override url_input and urls
+    sitemap_urls = []
     if uploaded_file and st.button("Parse Sitemap"):
-        st.session_state.parsed_urls = parse_uploaded_sitemap(uploaded_file)
-        if st.session_state.parsed_urls:
-            st.success(f"Successfully parsed {len(st.session_state.parsed_urls)} URLs from sitemap")
+        sitemap_urls = parse_uploaded_sitemap(uploaded_file)
+        if sitemap_urls:
+            st.success(f"Successfully parsed {len(sitemap_urls)} URLs from sitemap")
+            # Feed sitemap URLs to the comma-separated logic
+            url_input = ', '.join(sitemap_urls)
+            # Save to session state for Start Analysis
+            st.session_state.sitemap_urls = sitemap_urls
+    # If sitemap URLs were parsed, show them in a text area for review/edit
+    if 'sitemap_urls' in st.session_state and st.session_state.sitemap_urls:
+        url_input = st.text_area("Sitemap URLs (edit if needed, comma-separated)", value=', '.join(st.session_state.sitemap_urls), height=150)
+        urls = [u.strip() for u in url_input.split(',') if u.strip()]
+    elif url_input:
+        urls = [u.strip() for u in url_input.split(',') if u.strip()]
 
     # Display URL selection if URLs are parsed
     if st.session_state.parsed_urls:
@@ -377,26 +385,54 @@ def main():
     if st.button("Start Analysis"):
         # Use batch URLs if provided, else use selected_urls from sitemap
         urls_to_process = urls if urls else selected_urls
+        if not urls_to_process and 'sitemap_urls' in st.session_state and st.session_state.sitemap_urls:
+            urls_to_process = st.session_state.sitemap_urls
         if urls_to_process:
+            stop_crawl = False
+            stop_button_placeholder = st.empty()
+            # Show stop button before crawling loop starts
+            def stop_crawl_callback():
+                st.session_state.stop_crawl = True
+            stop_button_placeholder.button("Stop Crawling", on_click=stop_crawl_callback)
             with st.spinner("Crawling pages..."):
                 pages = {}
                 progress_bar = st.progress(0)
                 for i, url in enumerate(urls_to_process):
+                    # Check for stop signal
+                    if 'stop_crawl' in st.session_state and st.session_state.stop_crawl:
+                        st.warning("Crawling stopped by user.")
+                        break
                     try:
                         logger.info(f"Crawling URL: {url}")
                         with st.spinner(f"Crawling {url}..."):
                             page_data = crawler.crawl_url(url)
                             if page_data:
+                                # Clean immediately
+                                cleaned = clean_scraped_data(page_data)
+                                # Store in ChromaDB immediately
+                                try:
+                                    from chromadb_store import upsert_cleaned_page
+                                    upsert_cleaned_page(url, cleaned)
+                                except Exception as e:
+                                    st.warning(f"ChromaDB storage failed for {url}: {str(e)}")
                                 pages[url] = page_data
+                                # Also accumulate cleaned_pages for preview
+                                if 'cleaned_pages' not in locals():
+                                    cleaned_pages = {}
+                                cleaned_pages[url] = cleaned
                         progress_bar.progress((i + 1) / len(urls_to_process))
                     except Exception as e:
                         logger.error(f"Error crawling {url}: {str(e)}")
                         continue
+                # Remove stop button and reset state
+                stop_button_placeholder.empty()
+                if 'stop_crawl' in st.session_state:
+                    del st.session_state.stop_crawl
                 if pages:
                     st.session_state.pages = pages
-                    st.session_state.cleaned_pages = None
-                    st.session_state.show_cleaned = False
-                    st.success(f"Successfully crawled {len(pages)} pages")
+                    st.session_state.cleaned_pages = cleaned_pages if 'cleaned_pages' in locals() else None
+                    st.session_state.show_cleaned = True
+                    st.success(f"Successfully crawled and processed {len(pages)} pages")
                     # --- Automatically move to Clean Scraped Data step ---
                     import datetime
                     import hashlib
@@ -422,6 +458,10 @@ def main():
                             st.warning(f"ChromaDB storage failed for {page_url}: {str(e)}")
                     st.session_state.cleaned_pages = cleaned_pages
                     st.session_state.show_cleaned = True
+            # Show stop button while crawling
+            def stop_crawl_callback():
+                st.session_state.stop_crawl = True
+            stop_button_placeholder.button("Stop Crawling", on_click=stop_crawl_callback)
 
     # Show cleaning CTA and previews if pages are in session state
     if 'pages' in st.session_state and st.session_state.pages:
