@@ -10,6 +10,10 @@ import uuid
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
+# --- Specialized Contact Center Intent Map Prompt ---
+with open(os.path.join(os.path.dirname(__file__), "contact_center_intent_prompt.txt"), "r", encoding="utf-8") as f:
+    contact_center_intent_prompt_template = f.read()
+
 class LLMProcessor:
     def __init__(self):
         """Initialize the LLM processor with OpenRouter configuration."""
@@ -728,36 +732,11 @@ Important:
                 logger.error("Invalid HTML content for contact center intent analysis")
                 return None
 
-            prompt = f"""
-You are an Intent Discovery Expert helping a contact center transformation team.
-
-You are given structured HTML content from a product website, including headers, paragraphs, titles, testimonials, and internal/external links.
-
-Your goal is to analyze this content and return a structured \"Intent Map\" that captures what a user visiting this website may want to do.
-
-**IMPORTANT: Your output must include a markdown table with the following columns:**
-| Intent Name | User Goal | Sample Phrases | Source Context |
-
-- For each intent, fill out all columns:
-    - **Intent Name**: What the user wants to do (short phrase)
-    - **User Goal**: A 1-sentence description of the user's goal for this intent
-    - **Sample Phrases**: 2-3 example user utterances (in quotes, comma-separated)
-    - **Source Context**: The section, header, or page context where this intent is found (e.g., "Pharmacy > Refills")
-
-**Example:**
-| Intent Name | User Goal | Sample Phrases | Source Context |
-|-------------|----------|---------------|---------------|
-
-**Rules:**
-- Do **not** make up any information.
-- Only use what is present in the content.
-- If unsure, leave a cell blank.
-- Respond only with the markdown table and any additional notes if needed.
-- **Do NOT use or copy any information from the example table above. Only use information found in the Content section below.**
-
-**Content:**
-{html_content}
-"""
+            # Load prompt template from file
+            prompt_path = os.path.join(os.path.dirname(__file__), "contact_center_intent_prompt.txt")
+            with open(prompt_path, "r", encoding="utf-8") as f:
+                prompt_template = f.read()
+            prompt = prompt_template.format(html_content=html_content)
             logger.info("Sending specialized contact center intent prompt to LLM...")
             logger.debug(f"Prompt sent to LLM:\n{prompt}")
             completion = openai.ChatCompletion.create(

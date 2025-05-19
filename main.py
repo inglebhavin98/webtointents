@@ -569,5 +569,50 @@ def main():
             if 'intent_map' in intent:
                 display_contact_center_intent_map(intent['intent_map'])
 
+    # --- ChromaDB Entries Tab ---
+    st.markdown("---")
+    tabs = st.tabs(["Main", "ChromaDB Entries"])
+    with tabs[1]:
+        st.header("ChromaDB Entries")
+        from chromadb_store import get_chromadb_client, get_or_create_cleaned_collection
+        client = get_chromadb_client()
+        collection = get_or_create_cleaned_collection(client)
+        # Fetch all entries (ids and metadatas, and documents)
+        results = collection.get(include=["metadatas", "documents"])
+        ids = results.get("ids", [])
+        metadatas = results.get("metadatas", [])
+        documents = results.get("documents", [])
+        if not ids:
+            st.info("No entries found in ChromaDB.")
+        else:
+            # For intent output
+            if 'chromadb_intent_outputs' not in st.session_state:
+                st.session_state.chromadb_intent_outputs = {}
+            for i, entry_id in enumerate(ids):
+                url = metadatas[i].get("source") if metadatas and metadatas[i] else entry_id
+                col1, col2 = st.columns([6, 1])
+                with col1:
+                    st.write(f"**ID:** {entry_id}")
+                    st.write(f"**URL:** {url}")
+                with col2:
+                    if st.button("Generate intents", key=f"gen_intents_{i}"):
+                        from llm_processor import LLMProcessor
+                        llm_processor = LLMProcessor()
+                        doc = documents[i] if documents and i < len(documents) else ""
+                        if doc:
+                            with st.spinner("Generating intents from ChromaDB entry..."):
+                                result = llm_processor.analyze_contact_center_intents(doc)
+                                st.session_state.chromadb_intent_outputs[entry_id] = result
+                        else:
+                            st.warning("No document found for this entry.")
+                # Show output if available
+                if entry_id in st.session_state.chromadb_intent_outputs:
+                    st.markdown("**Intent Map Output:**")
+                    output = st.session_state.chromadb_intent_outputs[entry_id]
+                    if output and 'intent_map' in output:
+                        st.markdown(output['intent_map'])
+                    else:
+                        st.info("No intent map generated yet.")
+
 if __name__ == "__main__":
     main()
