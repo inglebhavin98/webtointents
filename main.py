@@ -663,10 +663,9 @@ def main():
                 st.session_state.chromadb_intent_outputs = {}
             for i, entry_id in enumerate(ids):
                 url = metadatas[i].get("source") if metadatas and metadatas[i] else entry_id
-                col1, col2 = st.columns([6, 1])
+                col1, col2 = st.columns([5, 2])
                 with col1:
                     st.write(f"**ID:** {entry_id}")
-                    st.write(f"**URL:** {url}")
                 with col2:
                     if st.button("Generate intents", key=f"gen_intents_{i}"):
                         from llm_processor import LLMProcessor
@@ -686,6 +685,60 @@ def main():
                         st.markdown(output['intent_map'])
                     else:
                         st.info("No intent map generated yet.")
+    with tabs[1]:
+        st.header("Knowledge Base Chat")
+        from chromadb_store import get_chromadb_client, get_or_create_cleaned_collection, embed_text
+        import chromadb_store
+        import hashlib
+        # Chat history in session state
+        if 'kb_chat_history' not in st.session_state:
+            st.session_state.kb_chat_history = []
+        # Chat UI
+        for msg in st.session_state.kb_chat_history:
+            if msg['role'] == 'user':
+                st.markdown(f"**You:** {msg['content']}")
+            else:
+                st.markdown(f"**Assistant:** {msg['content']}")
+        user_query = st.text_input("Ask a question about the knowledge base", key="kb_chat_input")
+        if st.button("Send", key="kb_chat_send") and user_query.strip():
+            # Embed query
+            query_embedding = embed_text(user_query)
+            # Query ChromaDB for top 3 similar chunks
+            client = get_chromadb_client()
+            collection = get_or_create_cleaned_collection(client)
+            results = collection.query(query_embeddings=[query_embedding], n_results=3, include=["documents", "metadatas", "distances"])
+            top_chunks = []
+            for i in range(len(results['documents'][0])):
+                doc = results['documents'][0][i]
+                meta = results['metadatas'][0][i] if results['metadatas'] and results['metadatas'][0][i] else {}
+                url = meta.get('source', '')
+                top_chunks.append(f"Source: {url}\n{doc}")
+            # Compose LLM prompt
+            context = "\n---\n".join(top_chunks)
+            llm_prompt = f"You are a helpful assistant. Use the following context from the knowledge base to answer the user's question.\n\nContext:\n{context}\n\nUser question: {user_query}\n\nAnswer:"
+            # Call LLM
+            from llm_processor import LLMProcessor
+            llm_processor = LLMProcessor()
+            with st.spinner("Thinking..."):
+                import openai
+                response = openai.ChatCompletion.create(
+                    headers={
+                        "HTTP-Referer": llm_processor.site_url,
+                        "X-Title": llm_processor.site_name,
+                    },
+                    model=llm_processor.model,
+                    messages=[
+                        {"role": "system", "content": "You are a helpful assistant for knowledge base Q&A."},
+                        {"role": "user", "content": llm_prompt}
+                    ],
+                    temperature=0.3
+                )
+                answer = response.choices[0].message.content.strip()
+            # Update chat history
+            st.session_state.kb_chat_history.append({"role": "user", "content": user_query})
+            st.session_state.kb_chat_history.append({"role": "assistant", "content": answer})
+            # Use st.text_input's on_change to clear input, do not set session_state directly here
+            st.stop()
 
 if __name__ == "__main__":
     main()
