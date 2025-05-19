@@ -331,414 +331,421 @@ def clean_scraped_data(page_data: dict) -> dict:
     return page_data
 
 def main():
-    # st.write(':green-background[App loaded! If you see this, the UI is rendering and waiting for your input.]')
-    st.title("Intent Scraper")
-    
-    # Initialize components
-    crawler = WebsiteCrawler()
-    llm_processor, intent_generator = initialize_components()
-    if not all([llm_processor, intent_generator]):
-        st.error("Failed to initialize required components. Please check the logs for details.")
-        return
-    
-    # Initialize session state
-    if 'analyzed_intents' not in st.session_state:
-        st.session_state.analyzed_intents = []
-    if 'parsed_urls' not in st.session_state:
-        st.session_state.parsed_urls = []
-    
-    # URL input and sitemap upload interface
-    url_input = st.text_input("Enter URL(s) to analyze (comma-separated for batch)")
-    uploaded_file = st.file_uploader("Or upload a sitemap", type=['xml'])
+    st.set_page_config(page_title="Intent Scraper", layout="wide")
+    page = st.sidebar.selectbox("Choose a page", ["Intent Scraper", "Dashboard"])
+    if page == "Dashboard":
+        # use dashboard_route from dashboard.py
+        from dashboard import dashboard_route
+        dashboard_route()
+        
+    if page == "Intent Scraper":
+        st.title("Intent Scraper")
+        
+        # Initialize components
+        crawler = WebsiteCrawler()
+        llm_processor, intent_generator = initialize_components()
+        if not all([llm_processor, intent_generator]):
+            st.error("Failed to initialize required components. Please check the logs for details.")
+            return
+        
+        # Initialize session state
+        if 'analyzed_intents' not in st.session_state:
+            st.session_state.analyzed_intents = []
+        if 'parsed_urls' not in st.session_state:
+            st.session_state.parsed_urls = []
+        
+        # URL input and sitemap upload interface
+        url_input = st.text_input("Enter URL(s) to analyze (comma-separated for batch)")
+        uploaded_file = st.file_uploader("Or upload a sitemap", type=['xml'])
 
-    # Parse multi-URL input
-    urls = []
-    # If sitemap is uploaded and parsed, override url_input and urls
-    sitemap_urls = []
-    if uploaded_file and st.button("Parse Sitemap"):
-        sitemap_urls = parse_uploaded_sitemap(uploaded_file)
-        if sitemap_urls:
-            st.success(f"Successfully parsed {len(sitemap_urls)} URLs from sitemap")
-            # Feed sitemap URLs to the comma-separated logic
-            url_input = ', '.join(sitemap_urls)
-            # Save to session state for Start Analysis
-            st.session_state.sitemap_urls = sitemap_urls
-    # If sitemap URLs were parsed, show them in a text area for review/edit
-    if 'sitemap_urls' in st.session_state and st.session_state.sitemap_urls:
-        url_input = st.text_area("Sitemap URLs (edit if needed, comma-separated)", value=', '.join(st.session_state.sitemap_urls), height=150)
-        urls = [u.strip() for u in url_input.split(',') if u.strip()]
-    elif url_input:
-        urls = [u.strip() for u in url_input.split(',') if u.strip()]
+        # Parse multi-URL input
+        urls = []
+        # If sitemap is uploaded and parsed, override url_input and urls
+        sitemap_urls = []
+        if uploaded_file and st.button("Parse Sitemap"):
+            sitemap_urls = parse_uploaded_sitemap(uploaded_file)
+            if sitemap_urls:
+                st.success(f"Successfully parsed {len(sitemap_urls)} URLs from sitemap")
+                # Feed sitemap URLs to the comma-separated logic
+                url_input = ', '.join(sitemap_urls)
+                # Save to session state for Start Analysis
+                st.session_state.sitemap_urls = sitemap_urls
+        # If sitemap URLs were parsed, show them in a text area for review/edit
+        if 'sitemap_urls' in st.session_state and st.session_state.sitemap_urls:
+            url_input = st.text_area("Sitemap URLs (edit if needed, comma-separated)", value=', '.join(st.session_state.sitemap_urls), height=150)
+            urls = [u.strip() for u in url_input.split(',') if u.strip()]
+        elif url_input:
+            urls = [u.strip() for u in url_input.split(',') if u.strip()]
 
-    # Display URL selection if URLs are parsed
-    if st.session_state.parsed_urls:
-        st.subheader("Select URLs to Analyze")
-        selected_urls = st.multiselect(
-            "Choose URLs to analyze",
-            st.session_state.parsed_urls,
-            default=st.session_state.parsed_urls[:5]  # Default to first 5 URLs
-        )
-        st.write(f"Selected {len(selected_urls)} URLs for analysis")
-    else:
-        selected_urls = []
+        # Display URL selection if URLs are parsed
+        if st.session_state.parsed_urls:
+            st.subheader("Select URLs to Analyze")
+            selected_urls = st.multiselect(
+                "Choose URLs to analyze",
+                st.session_state.parsed_urls,
+                default=st.session_state.parsed_urls[:5]  # Default to first 5 URLs
+            )
+            st.write(f"Selected {len(selected_urls)} URLs for analysis")
+        else:
+            selected_urls = []
 
-    if st.button("Start Analysis"):
-        # Use batch URLs if provided, else use selected_urls from sitemap
-        urls_to_process = urls if urls else selected_urls
-        if not urls_to_process and 'sitemap_urls' in st.session_state and st.session_state.sitemap_urls:
-            urls_to_process = st.session_state.sitemap_urls
-        if urls_to_process:
-            stop_crawl = False
-            stop_button_placeholder = st.empty()
-            # Show stop button before crawling loop starts
-            def stop_crawl_callback():
-                st.session_state.stop_crawl = True
-            stop_button_placeholder.button("Stop Crawling", on_click=stop_crawl_callback, key="stop_crawling_main")
-            with st.spinner("Crawling pages..."):
-                pages = {}
-                progress_bar = st.progress(0)
-                for i, url in enumerate(urls_to_process):
-                    # Check for stop signal
-                    if 'stop_crawl' in st.session_state and st.session_state.stop_crawl:
-                        st.warning("Crawling stopped by user.")
-                        break
-                    try:
-                        logger.info(f"Crawling URL: {url}")
-                        with st.spinner(f"Crawling {url}..."):
-                            page_data = crawler.crawl_url(url)
-                            if page_data:
-                                # Clean immediately
-                                cleaned = clean_scraped_data(page_data)
-                                # Store in ChromaDB immediately
-                                try:
-                                    from chromadb_store import upsert_cleaned_page
-                                    upsert_cleaned_page(url, cleaned)
-                                except Exception as e:
-                                    st.warning(f"ChromaDB storage failed for {url}: {str(e)}")
-                                pages[url] = page_data
-                                # Also accumulate cleaned_pages for preview
-                                if 'cleaned_pages' not in locals():
-                                    cleaned_pages = {}
-                                cleaned_pages[url] = cleaned
-                        progress_bar.progress((i + 1) / len(urls_to_process))
-                    except Exception as e:
-                        logger.error(f"Error crawling {url}: {str(e)}")
-                        continue
-                # Remove stop button and reset state
-                stop_button_placeholder.empty()  # This hides the button after crawling ends
-                if 'stop_crawl' in st.session_state:
-                    del st.session_state.stop_crawl
-                if pages:
-                    st.session_state.pages = pages
-                    st.session_state.cleaned_pages = cleaned_pages if 'cleaned_pages' in locals() else None
-                    st.session_state.show_cleaned = True
-                    st.success(f"Successfully crawled and processed {len(pages)} pages")
-                    # --- Automatically move to Clean Scraped Data step ---
-                    import datetime
-                    import hashlib
-                    import os
-                    cleaned_pages = {}
-                    os.makedirs('crawl_results', exist_ok=True)
-                    for page_url, page_data in st.session_state.pages.items():
-                        cleaned = clean_scraped_data(page_data)
-                        cleaned_pages[page_url] = cleaned
-                        # Save cleaned data to JSON file
-                        safe_url = page_url.replace('https://', '').replace('http://', '').replace('/', '_')
-                        url_hash = hashlib.md5(page_url.encode('utf-8')).hexdigest()
-                        filename = f"cleaned_{safe_url}_{url_hash}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-                        save_path = os.path.join('crawl_results', filename)
-                        with open(save_path, 'w', encoding='utf-8') as f:
-                            import json
-                            json.dump(cleaned, f, indent=2, ensure_ascii=False)
-                        # Store in ChromaDB
+        if st.button("Start Analysis"):
+            # Use batch URLs if provided, else use selected_urls from sitemap
+            urls_to_process = urls if urls else selected_urls
+            if not urls_to_process and 'sitemap_urls' in st.session_state and st.session_state.sitemap_urls:
+                urls_to_process = st.session_state.sitemap_urls
+            if urls_to_process:
+                stop_crawl = False
+                stop_button_placeholder = st.empty()
+                # Show stop button before crawling loop starts
+                def stop_crawl_callback():
+                    st.session_state.stop_crawl = True
+                stop_button_placeholder.button("Stop Crawling", on_click=stop_crawl_callback, key="stop_crawling_main")
+                with st.spinner("Crawling pages..."):
+                    pages = {}
+                    progress_bar = st.progress(0)
+                    for i, url in enumerate(urls_to_process):
+                        # Check for stop signal
+                        if 'stop_crawl' in st.session_state and st.session_state.stop_crawl:
+                            st.warning("Crawling stopped by user.")
+                            break
                         try:
-                            from chromadb_store import upsert_cleaned_page
-                            upsert_cleaned_page(page_url, cleaned)
+                            logger.info(f"Crawling URL: {url}")
+                            with st.spinner(f"Crawling {url}..."):
+                                page_data = crawler.crawl_url(url)
+                                if page_data:
+                                    # Clean immediately
+                                    cleaned = clean_scraped_data(page_data)
+                                    # Store in ChromaDB immediately
+                                    try:
+                                        from chromadb_store import upsert_cleaned_page
+                                        upsert_cleaned_page(url, cleaned)
+                                    except Exception as e:
+                                        st.warning(f"ChromaDB storage failed for {url}: {str(e)}")
+                                    pages[url] = page_data
+                                    # Also accumulate cleaned_pages for preview
+                                    if 'cleaned_pages' not in locals():
+                                        cleaned_pages = {}
+                                    cleaned_pages[url] = cleaned
+                            progress_bar.progress((i + 1) / len(urls_to_process))
                         except Exception as e:
-                            st.warning(f"ChromaDB storage failed for {page_url}: {str(e)}")
-                    st.session_state.cleaned_pages = cleaned_pages
-                    st.session_state.show_cleaned = True
-            # Show stop button while crawling
-            def stop_crawl_callback():
-                st.session_state.stop_crawl = True
-            stop_button_placeholder.button("Stop Crawling", on_click=stop_crawl_callback)
-
-    # Show cleaning CTA and previews if pages are in session state
-    if 'pages' in st.session_state and st.session_state.pages:
-        # Clean Scraped Data button
-        # DO NOT DELETE
-        # if st.button("Clean Scraped Data"):
-        #     import datetime
-        #     import hashlib
-        #     import os
-        #     cleaned_pages = {}
-        #     os.makedirs('crawl_results', exist_ok=True)
-        #     for page_url, page_data in st.session_state.pages.items():
-        #         cleaned = clean_scraped_data(page_data)
-        #         cleaned_pages[page_url] = cleaned
-        #         # Save cleaned data to JSON file
-        #         safe_url = page_url.replace('https://', '').replace('http://', '').replace('/', '_')
-        #         url_hash = hashlib.md5(page_url.encode('utf-8')).hexdigest()
-        #         filename = f"cleaned_{safe_url}_{url_hash}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-        #         save_path = os.path.join('crawl_results', filename)
-        #         with open(save_path, 'w', encoding='utf-8') as f:
-        #             import json
-        #             json.dump(cleaned, f, indent=2, ensure_ascii=False)
-        #         # Store in ChromaDB
-        #         try:
-        #             from chromadb_store import upsert_cleaned_page
-        #             upsert_cleaned_page(page_url, cleaned)
-        #         except Exception as e:
-        #             st.warning(f"ChromaDB storage failed for {page_url}: {str(e)}")
-        #     st.session_state.cleaned_pages = cleaned_pages
-        #     st.session_state.show_cleaned = True
-        # DO NOT DELETE END
-
-        # Show cleaned or raw preview based on state
-        if st.session_state.get('show_cleaned') and st.session_state.get('cleaned_pages'):
-            # st.header("Cleaned Scraped Data Preview")
-            # DO NOT DELETE
-            # for page_url, page_data in st.session_state.cleaned_pages.items():
-            #     with st.expander(f"{page_url}"):
-            #         st.write("**Metadata:**")
-            #         st.json(page_data.get('metadata', {}))
-            #         st.write("**Structure:**")
-            #         st.json(page_data.get('structure', {}))
-            #         st.write("**Navigation:**")
-            #         st.json(page_data.get('navigation', {}))
-            #         import json
-            #         import hashlib
-            #         raw_json = json.dumps(page_data, indent=2, ensure_ascii=False)
-            #         url_hash = hashlib.md5(page_url.encode('utf-8')).hexdigest()
-            #         col1, col2 = st.columns(2)
-            #         with col1:
-            #             if st.button(f"Save JSON", key=f"save_json_{url_hash}_cleaned_{page_url}"):
-            #                 import datetime
-            #                 import os
-            #                 safe_url = page_url.replace('https://', '').replace('http://', '').replace('/', '_')
-            #                 filename = f"scraped_{safe_url}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-            #                 save_path = os.path.join('crawl_results', filename)
-            #                 os.makedirs('crawl_results', exist_ok=True)
-            #                 with open(save_path, 'w', encoding='utf-8') as f:
-            #                     f.write(raw_json)
-            #                 st.success(f"Saved to {save_path}")
-            #         with col2:
-            #             st.code(raw_json, language='json')
-            #             st.caption("You can copy the above JSON using the copy button in the code block.")
-
-            # --- LLM Intent Extraction Section (now below the cleaned data preview) ---
-            # DO NOT DELETE END
-            st.markdown("---")
-            # DO NOT DELETE START
-            # st.subheader("LLM Intent Extraction")
-            # for page_url, page_data in st.session_state.cleaned_pages.items():
-            #     url_hash = hashlib.md5(page_url.encode('utf-8')).hexdigest()
-            #     st.markdown(f"**Page:** {page_url}")
-
-            #     def extract_all_text(data, prioritized_keys=None):
-            #         # Recursively extract all non-empty text from prioritized fields, fallback to all text
-            #         if prioritized_keys is None:
-            #             prioritized_keys = ['chunks', 'content', 'headers', 'faqs_clean']
-            #         texts = []
-            #         def _extract(obj):
-            #             if isinstance(obj, dict):
-            #                 for k, v in obj.items():
-            #                     if k in prioritized_keys:
-            #                         _extract(v)
-            #                     elif isinstance(v, (dict, list)):
-            #                         _extract(v)
-            #                     elif isinstance(v, str) and v.strip():
-            #                         texts.append(v.strip())
-            #             elif isinstance(obj, list):
-            #                 for item in obj:
-            #                     _extract(item)
-            #             elif isinstance(obj, str) and obj.strip():
-            #                 texts.append(obj.strip())
-            #         # First try prioritized keys
-            #         for key in prioritized_keys:
-            #             if key in data:
-            #                 _extract(data[key])
-            #         # If still empty, fallback to all text in the structure
-            #         if not texts:
-            #             _extract(data)
-            #         return '\n'.join(texts)
-
-            #     cleaned_text = extract_all_text(page_data)
-
-            #     with st.expander(f"Show cleaned text sent to LLM for {page_url}", expanded=False):
-            #         st.write("--- Cleaned Data Structure ---")
-            #         st.json(page_data)
-            #         st.write("--- Cleaned Text Sent to LLM ---")
-            #         st.write(cleaned_text if cleaned_text else "(No text found)")
-            #     llm_btn = st.button(f"Extract Intents with LLM", key=f"llm_extract_{url_hash}_{page_url}")
-            #     if llm_btn:
-            #         if not cleaned_text:
-            #             st.warning("No cleaned text found for this page. Cannot extract intents.")
-            #         else:
-            #             try:
-            #                 llm_result = llm_processor.analyze_contact_center_intents(cleaned_text)
-            #                 st.markdown("### LLM-Extracted Intents Table")
-            #                 if llm_result and 'intent_map' in llm_result:
-            #                     st.markdown(llm_result['intent_map'])
-            #                     # Save intent map as markdown file
-            #                     import datetime
-            #                     import hashlib
-            #                     import os
-            #                     os.makedirs('crawl_results', exist_ok=True)
-            #                     safe_url = page_url.replace('https://', '').replace('http://', '').replace('/', '_')
-            #                     url_hash = hashlib.md5(page_url.encode('utf-8')).hexdigest()
-            #                     filename = f"intent_table_{safe_url}_{url_hash}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
-            #                     save_path = os.path.join('crawl_results', filename)
-            #                     with open(save_path, 'w', encoding='utf-8') as f:
-            #                         f.write(llm_result['intent_map'])
-            #                     with st.expander("Show LLM Prompt", expanded=False):
-            #                         st.code(llm_result.get('llm_prompt', ''), language='markdown')
-            #                     st.success(f"Intent table saved to {save_path}")
-            #                 else:
-            #                     st.warning("No intent map returned by LLM.")
-            #             except Exception as e:
-            #                 st.error(f"LLM extraction failed: {str(e)}")
-            # DO NOT DELETE END
-        else:
-            st.header("Raw Scraped Data Preview")
-            for page_url, page_data in st.session_state.pages.items():
-                with st.expander(f"{page_url}"):
-                    st.write("**Metadata:**")
-                    st.json(page_data.get('metadata', {}))
-                    st.write("**Structure:**")
-                    st.json(page_data.get('structure', {}))
-                    st.write("**Navigation:**")
-                    st.json(page_data.get('navigation', {}))
-                    import json
-                    import hashlib
-                    raw_json = json.dumps(page_data, indent=2, ensure_ascii=False)
-                    url_hash = hashlib.md5(page_url.encode('utf-8')).hexdigest()
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        if st.button(f"Save JSON", key=f"save_json_{url_hash}_raw_{page_url}"):
-                            import datetime
-                            import os
+                            logger.error(f"Error crawling {url}: {str(e)}")
+                            continue
+                    # Remove stop button and reset state
+                    stop_button_placeholder.empty()  # This hides the button after crawling ends
+                    if 'stop_crawl' in st.session_state:
+                        del st.session_state.stop_crawl
+                    if pages:
+                        st.session_state.pages = pages
+                        st.session_state.cleaned_pages = cleaned_pages if 'cleaned_pages' in locals() else None
+                        st.session_state.show_cleaned = True
+                        st.success(f"Successfully crawled and processed {len(pages)} pages")
+                        # --- Automatically move to Clean Scraped Data step ---
+                        import datetime
+                        import hashlib
+                        import os
+                        cleaned_pages = {}
+                        os.makedirs('crawl_results', exist_ok=True)
+                        for page_url, page_data in st.session_state.pages.items():
+                            cleaned = clean_scraped_data(page_data)
+                            cleaned_pages[page_url] = cleaned
+                            # Save cleaned data to JSON file
                             safe_url = page_url.replace('https://', '').replace('http://', '').replace('/', '_')
-                            filename = f"scraped_{safe_url}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+                            url_hash = hashlib.md5(page_url.encode('utf-8')).hexdigest()
+                            filename = f"cleaned_{safe_url}_{url_hash}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
                             save_path = os.path.join('crawl_results', filename)
-                            os.makedirs('crawl_results', exist_ok=True)
                             with open(save_path, 'w', encoding='utf-8') as f:
-                                f.write(raw_json)
-                            st.success(f"Saved to {save_path}")
-                    with col2:
-                        st.code(raw_json, language='json')
-                        st.caption("You can copy the above JSON using the copy button in the code block.")
+                                import json
+                                json.dump(cleaned, f, indent=2, ensure_ascii=False)
+                            # Store in ChromaDB
+                            try:
+                                from chromadb_store import upsert_cleaned_page
+                                upsert_cleaned_page(page_url, cleaned)
+                            except Exception as e:
+                                st.warning(f"ChromaDB storage failed for {page_url}: {str(e)}")
+                        st.session_state.cleaned_pages = cleaned_pages
+                        st.session_state.show_cleaned = True
+                # Show stop button while crawling
+                def stop_crawl_callback():
+                    st.session_state.stop_crawl = True
+                stop_button_placeholder.button("Stop Crawling", on_click=stop_crawl_callback)
 
-    # Intent analysis section
-    if st.session_state.analyzed_intents:
-        st.header("Intent Analysis Results")
-        for intent in st.session_state.analyzed_intents:
-            display_intent_analysis(intent)
-    
-    # Contact center intent map section
-    if st.session_state.analyzed_intents:
-        st.header("Contact Center Intent Map")
-        for intent in st.session_state.analyzed_intents:
-            if 'intent_map' in intent:
-                display_contact_center_intent_map(intent['intent_map'])
+        # Show cleaning CTA and previews if pages are in session state
+        if 'pages' in st.session_state and st.session_state.pages:
+            # Clean Scraped Data button
+            # DO NOT DELETE
+            # if st.button("Clean Scraped Data"):
+            #     import datetime
+            #     import hashlib
+            #     import os
+            #     cleaned_pages = {}
+            #     os.makedirs('crawl_results', exist_ok=True)
+            #     for page_url, page_data in st.session_state.pages.items():
+            #         cleaned = clean_scraped_data(page_data)
+            #         cleaned_pages[page_url] = cleaned
+            #         # Save cleaned data to JSON file
+            #         safe_url = page_url.replace('https://', '').replace('http://', '').replace('/', '_')
+            #         url_hash = hashlib.md5(page_url.encode('utf-8')).hexdigest()
+            #         filename = f"cleaned_{safe_url}_{url_hash}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+            #         save_path = os.path.join('crawl_results', filename)
+            #         with open(save_path, 'w', encoding='utf-8') as f:
+            #             import json
+            #             json.dump(cleaned, f, indent=2, ensure_ascii=False)
+            #         # Store in ChromaDB
+            #         try:
+            #             from chromadb_store import upsert_cleaned_page
+            #             upsert_cleaned_page(page_url, cleaned)
+            #         except Exception as e:
+            #             st.warning(f"ChromaDB storage failed for {page_url}: {str(e)}")
+            #     st.session_state.cleaned_pages = cleaned_pages
+            #     st.session_state.show_cleaned = True
+            # DO NOT DELETE END
 
-    # --- ChromaDB Entries Tab ---
-    st.markdown("---")
-    tabs = st.tabs(["Intent Maps","Knowledge base"])
-    with tabs[0]:
-        st.header("ChromaDB Entries")
-        from chromadb_store import get_chromadb_client, get_or_create_cleaned_collection
-        client = get_chromadb_client()
-        collection = get_or_create_cleaned_collection(client)
-        # Fetch all entries (ids and metadatas, and documents)
-        results = collection.get(include=["metadatas", "documents"])
-        ids = results.get("ids", [])
-        metadatas = results.get("metadatas", [])
-        documents = results.get("documents", [])
-        if not ids:
-            st.info("No entries found in ChromaDB.")
-        else:
-            # For intent output
-            if 'chromadb_intent_outputs' not in st.session_state:
-                st.session_state.chromadb_intent_outputs = {}
-            for i, entry_id in enumerate(ids):
-                url = metadatas[i].get("source") if metadatas and metadatas[i] else entry_id
-                col1, col2 = st.columns([5, 2])
-                with col1:
-                    st.write(f"**ID:** {entry_id}")
-                with col2:
-                    if st.button("Generate intents", key=f"gen_intents_{i}"):
-                        from llm_processor import LLMProcessor
-                        llm_processor = LLMProcessor()
-                        doc = documents[i] if documents and i < len(documents) else ""
-                        if doc:
-                            with st.spinner("Generating intents from ChromaDB entry..."):
-                                result = llm_processor.analyze_contact_center_intents(doc)
-                                st.session_state.chromadb_intent_outputs[entry_id] = result
-                        else:
-                            st.warning("No document found for this entry.")
-                # Show output if available
-                if entry_id in st.session_state.chromadb_intent_outputs:
-                    st.markdown("**Intent Map Output:**")
-                    output = st.session_state.chromadb_intent_outputs[entry_id]
-                    if output and 'intent_map' in output:
-                        st.markdown(output['intent_map'])
-                    else:
-                        st.info("No intent map generated yet.")
-    with tabs[1]:
-        st.header("Knowledge Base Chat")
-        from chromadb_store import get_chromadb_client, get_or_create_cleaned_collection, embed_text
-        import chromadb_store
-        import hashlib
-        # Chat history in session state
-        if 'kb_chat_history' not in st.session_state:
-            st.session_state.kb_chat_history = []
-        # Chat UI
-        for msg in st.session_state.kb_chat_history:
-            if msg['role'] == 'user':
-                st.markdown(f"**You:** {msg['content']}")
+            # Show cleaned or raw preview based on state
+            if st.session_state.get('show_cleaned') and st.session_state.get('cleaned_pages'):
+                # st.header("Cleaned Scraped Data Preview")
+                # DO NOT DELETE
+                # for page_url, page_data in st.session_state.cleaned_pages.items():
+                #     with st.expander(f"{page_url}"):
+                #         st.write("**Metadata:**")
+                #         st.json(page_data.get('metadata', {}))
+                #         st.write("**Structure:**")
+                #         st.json(page_data.get('structure', {}))
+                #         st.write("**Navigation:**")
+                #         st.json(page_data.get('navigation', {}))
+                #         import json
+                #         import hashlib
+                #         raw_json = json.dumps(page_data, indent=2, ensure_ascii=False)
+                #         url_hash = hashlib.md5(page_url.encode('utf-8')).hexdigest()
+                #         col1, col2 = st.columns(2)
+                #         with col1:
+                #             if st.button(f"Save JSON", key=f"save_json_{url_hash}_cleaned_{page_url}"):
+                #                 import datetime
+                #                 import os
+                #                 safe_url = page_url.replace('https://', '').replace('http://', '').replace('/', '_')
+                #                 filename = f"scraped_{safe_url}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+                #                 save_path = os.path.join('crawl_results', filename)
+                #                 os.makedirs('crawl_results', exist_ok=True)
+                #                 with open(save_path, 'w', encoding='utf-8') as f:
+                #                     f.write(raw_json)
+                #                 st.success(f"Saved to {save_path}")
+                #         with col2:
+                #             st.code(raw_json, language='json')
+                #             st.caption("You can copy the above JSON using the copy button in the code block.")
+
+                # --- LLM Intent Extraction Section (now below the cleaned data preview) ---
+                # DO NOT DELETE END
+                st.markdown("---")
+                # DO NOT DELETE START
+                # st.subheader("LLM Intent Extraction")
+                # for page_url, page_data in st.session_state.cleaned_pages.items():
+                #     url_hash = hashlib.md5(page_url.encode('utf-8')).hexdigest()
+                #     st.markdown(f"**Page:** {page_url}")
+
+                #     def extract_all_text(data, prioritized_keys=None):
+                #         # Recursively extract all non-empty text from prioritized fields, fallback to all text
+                #         if prioritized_keys is None:
+                #             prioritized_keys = ['chunks', 'content', 'headers', 'faqs_clean']
+                #         texts = []
+                #         def _extract(obj):
+                #             if isinstance(obj, dict):
+                #                 for k, v in obj.items():
+                #                     if k in prioritized_keys:
+                #                         _extract(v)
+                #                     elif isinstance(v, (dict, list)):
+                #                         _extract(v)
+                #                     elif isinstance(v, str) and v.strip():
+                #                         texts.append(v.strip())
+                #             elif isinstance(obj, list):
+                #                 for item in obj:
+                #                     _extract(item)
+                #             elif isinstance(obj, str) and obj.strip():
+                #                 texts.append(obj.strip())
+                #         # First try prioritized keys
+                #         for key in prioritized_keys:
+                #             if key in data:
+                #                 _extract(data[key])
+                #         # If still empty, fallback to all text in the structure
+                #         if not texts:
+                #             _extract(data)
+                #         return '\n'.join(texts)
+
+                #     cleaned_text = extract_all_text(page_data)
+
+                #     with st.expander(f"Show cleaned text sent to LLM for {page_url}", expanded=False):
+                #         st.write("--- Cleaned Data Structure ---")
+                #         st.json(page_data)
+                #         st.write("--- Cleaned Text Sent to LLM ---")
+                #         st.write(cleaned_text if cleaned_text else "(No text found)")
+                #     llm_btn = st.button(f"Extract Intents with LLM", key=f"llm_extract_{url_hash}_{page_url}")
+                #     if llm_btn:
+                #         if not cleaned_text:
+                #             st.warning("No cleaned text found for this page. Cannot extract intents.")
+                #         else:
+                #             try:
+                #                 llm_result = llm_processor.analyze_contact_center_intents(cleaned_text)
+                #                 st.markdown("### LLM-Extracted Intents Table")
+                #                 if llm_result and 'intent_map' in llm_result:
+                #                     st.markdown(llm_result['intent_map'])
+                #                     # Save intent map as markdown file
+                #                     import datetime
+                #                     import hashlib
+                #                     import os
+                #                     os.makedirs('crawl_results', exist_ok=True)
+                #                     safe_url = page_url.replace('https://', '').replace('http://', '').replace('/', '_')
+                #                     url_hash = hashlib.md5(page_url.encode('utf-8')).hexdigest()
+                #                     filename = f"intent_table_{safe_url}_{url_hash}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
+                #                     save_path = os.path.join('crawl_results', filename)
+                #                     with open(save_path, 'w', encoding='utf-8') as f:
+                #                         f.write(llm_result['intent_map'])
+                #                     with st.expander("Show LLM Prompt", expanded=False):
+                #                         st.code(llm_result.get('llm_prompt', ''), language='markdown')
+                #                     st.success(f"Intent table saved to {save_path}")
+                #                 else:
+                #                     st.warning("No intent map returned by LLM.")
+                #             except Exception as e:
+                #                 st.error(f"LLM extraction failed: {str(e)}")
+                # DO NOT DELETE END
             else:
-                st.markdown(f"**Assistant:** {msg['content']}")
-        user_query = st.text_input("Ask a question about the knowledge base", key="kb_chat_input")
-        if st.button("Send", key="kb_chat_send") and user_query.strip():
-            # Embed query
-            query_embedding = embed_text(user_query)
-            # Query ChromaDB for top 3 similar chunks
+                st.header("Raw Scraped Data Preview")
+                for page_url, page_data in st.session_state.pages.items():
+                    with st.expander(f"{page_url}"):
+                        st.write("**Metadata:**")
+                        st.json(page_data.get('metadata', {}))
+                        st.write("**Structure:**")
+                        st.json(page_data.get('structure', {}))
+                        st.write("**Navigation:**")
+                        st.json(page_data.get('navigation', {}))
+                        import json
+                        import hashlib
+                        raw_json = json.dumps(page_data, indent=2, ensure_ascii=False)
+                        url_hash = hashlib.md5(page_url.encode('utf-8')).hexdigest()
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            if st.button(f"Save JSON", key=f"save_json_{url_hash}_raw_{page_url}"):
+                                import datetime
+                                import os
+                                safe_url = page_url.replace('https://', '').replace('http://', '').replace('/', '_')
+                                filename = f"scraped_{safe_url}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+                                save_path = os.path.join('crawl_results', filename)
+                                os.makedirs('crawl_results', exist_ok=True)
+                                with open(save_path, 'w', encoding='utf-8') as f:
+                                    f.write(raw_json)
+                                st.success(f"Saved to {save_path}")
+                        with col2:
+                            st.code(raw_json, language='json')
+                            st.caption("You can copy the above JSON using the copy button in the code block.")
+
+        # Intent analysis section
+        if st.session_state.analyzed_intents:
+            st.header("Intent Analysis Results")
+            for intent in st.session_state.analyzed_intents:
+                display_intent_analysis(intent)
+        
+        # Contact center intent map section
+        if st.session_state.analyzed_intents:
+            st.header("Contact Center Intent Map")
+            for intent in st.session_state.analyzed_intents:
+                if 'intent_map' in intent:
+                    display_contact_center_intent_map(intent['intent_map'])
+
+        # --- ChromaDB Entries Tab ---
+        st.markdown("---")
+        tabs = st.tabs(["Intent Maps","Knowledge base"])
+        with tabs[0]:
+            st.header("ChromaDB Entries")
+            from chromadb_store import get_chromadb_client, get_or_create_cleaned_collection
             client = get_chromadb_client()
             collection = get_or_create_cleaned_collection(client)
-            results = collection.query(query_embeddings=[query_embedding], n_results=3, include=["documents", "metadatas", "distances"])
-            top_chunks = []
-            for i in range(len(results['documents'][0])):
-                doc = results['documents'][0][i]
-                meta = results['metadatas'][0][i] if results['metadatas'] and results['metadatas'][0][i] else {}
-                url = meta.get('source', '')
-                top_chunks.append(f"Source: {url}\n{doc}")
-            # Compose LLM prompt
-            context = "\n---\n".join(top_chunks)
-            llm_prompt = f"You are a helpful assistant. Use the following context from the knowledge base to answer the user's question.\n\nContext:\n{context}\n\nUser question: {user_query}\n\nAnswer:"
-            # Call LLM
-            from llm_processor import LLMProcessor
-            llm_processor = LLMProcessor()
-            with st.spinner("Thinking..."):
-                import openai
-                response = openai.ChatCompletion.create(
-                    headers={
-                        "HTTP-Referer": llm_processor.site_url,
-                        "X-Title": llm_processor.site_name,
-                    },
-                    model=llm_processor.model,
-                    messages=[
-                        {"role": "system", "content": "You are a helpful assistant for knowledge base Q&A."},
-                        {"role": "user", "content": llm_prompt}
-                    ],
-                    temperature=0.3
-                )
-                answer = response.choices[0].message.content.strip()
-            # Update chat history
-            st.session_state.kb_chat_history.append({"role": "user", "content": user_query})
-            st.session_state.kb_chat_history.append({"role": "assistant", "content": answer})
-            # Use st.text_input's on_change to clear input, do not set session_state directly here
-            st.stop()
+            # Fetch all entries (ids and metadatas, and documents)
+            results = collection.get(include=["metadatas", "documents"])
+            ids = results.get("ids", [])
+            metadatas = results.get("metadatas", [])
+            documents = results.get("documents", [])
+            if not ids:
+                st.info("No entries found in ChromaDB.")
+            else:
+                # For intent output
+                if 'chromadb_intent_outputs' not in st.session_state:
+                    st.session_state.chromadb_intent_outputs = {}
+                for i, entry_id in enumerate(ids):
+                    url = metadatas[i].get("source") if metadatas and metadatas[i] else entry_id
+                    col1, col2 = st.columns([5, 2])
+                    with col1:
+                        st.write(f"**ID:** {entry_id}")
+                    with col2:
+                        if st.button("Generate intents", key=f"gen_intents_{i}"):
+                            from llm_processor import LLMProcessor
+                            llm_processor = LLMProcessor()
+                            doc = documents[i] if documents and i < len(documents) else ""
+                            if doc:
+                                with st.spinner("Generating intents from ChromaDB entry..."):
+                                    result = llm_processor.analyze_contact_center_intents(doc)
+                                    st.session_state.chromadb_intent_outputs[entry_id] = result
+                            else:
+                                st.warning("No document found for this entry.")
+                    # Show output if available
+                    if entry_id in st.session_state.chromadb_intent_outputs:
+                        st.markdown("**Intent Map Output:**")
+                        output = st.session_state.chromadb_intent_outputs[entry_id]
+                        if output and 'intent_map' in output:
+                            st.markdown(output['intent_map'])
+                        else:
+                            st.info("No intent map generated yet.")
+        with tabs[1]:
+            st.header("Knowledge Base Chat")
+            from chromadb_store import get_chromadb_client, get_or_create_cleaned_collection, embed_text
+            import chromadb_store
+            import hashlib
+            # Chat history in session state
+            if 'kb_chat_history' not in st.session_state:
+                st.session_state.kb_chat_history = []
+            # Chat UI
+            for msg in st.session_state.kb_chat_history:
+                if msg['role'] == 'user':
+                    st.markdown(f"**You:** {msg['content']}")
+                else:
+                    st.markdown(f"**Assistant:** {msg['content']}")
+            user_query = st.text_input("Ask a question about the knowledge base", key="kb_chat_input")
+            if st.button("Send", key="kb_chat_send") and user_query.strip():
+                # Embed query
+                query_embedding = embed_text(user_query)
+                # Query ChromaDB for top 3 similar chunks
+                client = get_chromadb_client()
+                collection = get_or_create_cleaned_collection(client)
+                results = collection.query(query_embeddings=[query_embedding], n_results=3, include=["documents", "metadatas", "distances"])
+                top_chunks = []
+                for i in range(len(results['documents'][0])):
+                    doc = results['documents'][0][i]
+                    meta = results['metadatas'][0][i] if results['metadatas'] and results['metadatas'][0][i] else {}
+                    url = meta.get('source', '')
+                    top_chunks.append(f"Source: {url}\n{doc}")
+                # Compose LLM prompt
+                context = "\n---\n".join(top_chunks)
+                llm_prompt = f"You are a helpful assistant. Use the following context from the knowledge base to answer the user's question.\n\nContext:\n{context}\n\nUser question: {user_query}\n\nAnswer:"
+                # Call LLM
+                from llm_processor import LLMProcessor
+                llm_processor = LLMProcessor()
+                with st.spinner("Thinking..."):
+                    import openai
+                    response = openai.ChatCompletion.create(
+                        headers={
+                            "HTTP-Referer": llm_processor.site_url,
+                            "X-Title": llm_processor.site_name,
+                        },
+                        model=llm_processor.model,
+                        messages=[
+                            {"role": "system", "content": "You are a helpful assistant for knowledge base Q&A."},
+                            {"role": "user", "content": llm_prompt}
+                        ],
+                        temperature=0.3
+                    )
+                    answer = response.choices[0].message.content.strip()
+                # Update chat history
+                st.session_state.kb_chat_history.append({"role": "user", "content": user_query})
+                st.session_state.kb_chat_history.append({"role": "assistant", "content": answer})
+                # Use st.text_input's on_change to clear input, do not set session_state directly here
+                st.stop()
 
 if __name__ == "__main__":
     main()

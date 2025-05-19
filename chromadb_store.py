@@ -20,6 +20,16 @@ def get_or_create_cleaned_collection(client=None):
     )
     return collection
 
+def get_or_create_intents_collection(client=None):
+    """Get or create the 'intents' collection for storing intent analysis results."""
+    if client is None:
+        client = get_chromadb_client()
+    collection = client.get_or_create_collection(
+        name="intents",
+        metadata={"description": "LLM-generated intent analysis results, keyed by document or chunk ID"}
+    )
+    return collection
+
 def query_similar_pages(query_text, n_results=5):
     """Query ChromaDB for similar pages to the input text."""
     client = get_chromadb_client()
