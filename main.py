@@ -10,6 +10,7 @@ import xml.etree.ElementTree as ET
 from io import StringIO
 from typing import Dict, Any
 from collections import defaultdict
+import chromadb_store  # Add this import
 
 # Configure logging
 logging.basicConfig(
@@ -401,8 +402,13 @@ def main():
         # Clean Scraped Data button
         if st.button("Clean Scraped Data"):
             cleaned_pages = {}
+            # Initialize ChromaDB collection for storing cleaned pages
+            chroma_collection = chromadb_store.initialize_chromadb_collection()
             for page_url, page_data in st.session_state.pages.items():
-                cleaned_pages[page_url] = clean_scraped_data(page_data)
+                cleaned = clean_scraped_data(page_data)
+                cleaned_pages[page_url] = cleaned
+                # Store in ChromaDB after cleaning
+                chromadb_store.store_page_in_chromadb(cleaned, page_url, collection=chroma_collection)
             st.session_state.cleaned_pages = cleaned_pages
             st.session_state.show_cleaned = True
 
