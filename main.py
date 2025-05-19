@@ -393,7 +393,7 @@ def main():
             # Show stop button before crawling loop starts
             def stop_crawl_callback():
                 st.session_state.stop_crawl = True
-            stop_button_placeholder.button("Stop Crawling", on_click=stop_crawl_callback)
+            stop_button_placeholder.button("Stop Crawling", on_click=stop_crawl_callback, key="stop_crawling_main")
             with st.spinner("Crawling pages..."):
                 pages = {}
                 progress_bar = st.progress(0)
@@ -425,7 +425,7 @@ def main():
                         logger.error(f"Error crawling {url}: {str(e)}")
                         continue
                 # Remove stop button and reset state
-                stop_button_placeholder.empty()
+                stop_button_placeholder.empty()  # This hides the button after crawling ends
                 if 'stop_crawl' in st.session_state:
                     del st.session_state.stop_crawl
                 if pages:
@@ -466,133 +466,139 @@ def main():
     # Show cleaning CTA and previews if pages are in session state
     if 'pages' in st.session_state and st.session_state.pages:
         # Clean Scraped Data button
-        if st.button("Clean Scraped Data"):
-            import datetime
-            import hashlib
-            import os
-            cleaned_pages = {}
-            os.makedirs('crawl_results', exist_ok=True)
-            for page_url, page_data in st.session_state.pages.items():
-                cleaned = clean_scraped_data(page_data)
-                cleaned_pages[page_url] = cleaned
-                # Save cleaned data to JSON file
-                safe_url = page_url.replace('https://', '').replace('http://', '').replace('/', '_')
-                url_hash = hashlib.md5(page_url.encode('utf-8')).hexdigest()
-                filename = f"cleaned_{safe_url}_{url_hash}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-                save_path = os.path.join('crawl_results', filename)
-                with open(save_path, 'w', encoding='utf-8') as f:
-                    import json
-                    json.dump(cleaned, f, indent=2, ensure_ascii=False)
-                # Store in ChromaDB
-                try:
-                    from chromadb_store import upsert_cleaned_page
-                    upsert_cleaned_page(page_url, cleaned)
-                except Exception as e:
-                    st.warning(f"ChromaDB storage failed for {page_url}: {str(e)}")
-            st.session_state.cleaned_pages = cleaned_pages
-            st.session_state.show_cleaned = True
+        # DO NOT DELETE
+        # if st.button("Clean Scraped Data"):
+        #     import datetime
+        #     import hashlib
+        #     import os
+        #     cleaned_pages = {}
+        #     os.makedirs('crawl_results', exist_ok=True)
+        #     for page_url, page_data in st.session_state.pages.items():
+        #         cleaned = clean_scraped_data(page_data)
+        #         cleaned_pages[page_url] = cleaned
+        #         # Save cleaned data to JSON file
+        #         safe_url = page_url.replace('https://', '').replace('http://', '').replace('/', '_')
+        #         url_hash = hashlib.md5(page_url.encode('utf-8')).hexdigest()
+        #         filename = f"cleaned_{safe_url}_{url_hash}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        #         save_path = os.path.join('crawl_results', filename)
+        #         with open(save_path, 'w', encoding='utf-8') as f:
+        #             import json
+        #             json.dump(cleaned, f, indent=2, ensure_ascii=False)
+        #         # Store in ChromaDB
+        #         try:
+        #             from chromadb_store import upsert_cleaned_page
+        #             upsert_cleaned_page(page_url, cleaned)
+        #         except Exception as e:
+        #             st.warning(f"ChromaDB storage failed for {page_url}: {str(e)}")
+        #     st.session_state.cleaned_pages = cleaned_pages
+        #     st.session_state.show_cleaned = True
+        # DO NOT DELETE END
 
         # Show cleaned or raw preview based on state
         if st.session_state.get('show_cleaned') and st.session_state.get('cleaned_pages'):
-            st.header("Cleaned Scraped Data Preview")
-            for page_url, page_data in st.session_state.cleaned_pages.items():
-                with st.expander(f"{page_url}"):
-                    st.write("**Metadata:**")
-                    st.json(page_data.get('metadata', {}))
-                    st.write("**Structure:**")
-                    st.json(page_data.get('structure', {}))
-                    st.write("**Navigation:**")
-                    st.json(page_data.get('navigation', {}))
-                    import json
-                    import hashlib
-                    raw_json = json.dumps(page_data, indent=2, ensure_ascii=False)
-                    url_hash = hashlib.md5(page_url.encode('utf-8')).hexdigest()
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        if st.button(f"Save JSON", key=f"save_json_{url_hash}_cleaned"):
-                            import datetime
-                            import os
-                            safe_url = page_url.replace('https://', '').replace('http://', '').replace('/', '_')
-                            filename = f"scraped_{safe_url}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-                            save_path = os.path.join('crawl_results', filename)
-                            os.makedirs('crawl_results', exist_ok=True)
-                            with open(save_path, 'w', encoding='utf-8') as f:
-                                f.write(raw_json)
-                            st.success(f"Saved to {save_path}")
-                    with col2:
-                        st.code(raw_json, language='json')
-                        st.caption("You can copy the above JSON using the copy button in the code block.")
+            # st.header("Cleaned Scraped Data Preview")
+            # DO NOT DELETE
+            # for page_url, page_data in st.session_state.cleaned_pages.items():
+            #     with st.expander(f"{page_url}"):
+            #         st.write("**Metadata:**")
+            #         st.json(page_data.get('metadata', {}))
+            #         st.write("**Structure:**")
+            #         st.json(page_data.get('structure', {}))
+            #         st.write("**Navigation:**")
+            #         st.json(page_data.get('navigation', {}))
+            #         import json
+            #         import hashlib
+            #         raw_json = json.dumps(page_data, indent=2, ensure_ascii=False)
+            #         url_hash = hashlib.md5(page_url.encode('utf-8')).hexdigest()
+            #         col1, col2 = st.columns(2)
+            #         with col1:
+            #             if st.button(f"Save JSON", key=f"save_json_{url_hash}_cleaned_{page_url}"):
+            #                 import datetime
+            #                 import os
+            #                 safe_url = page_url.replace('https://', '').replace('http://', '').replace('/', '_')
+            #                 filename = f"scraped_{safe_url}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+            #                 save_path = os.path.join('crawl_results', filename)
+            #                 os.makedirs('crawl_results', exist_ok=True)
+            #                 with open(save_path, 'w', encoding='utf-8') as f:
+            #                     f.write(raw_json)
+            #                 st.success(f"Saved to {save_path}")
+            #         with col2:
+            #             st.code(raw_json, language='json')
+            #             st.caption("You can copy the above JSON using the copy button in the code block.")
 
             # --- LLM Intent Extraction Section (now below the cleaned data preview) ---
+            # DO NOT DELETE END
             st.markdown("---")
-            st.subheader("LLM Intent Extraction")
-            for page_url, page_data in st.session_state.cleaned_pages.items():
-                url_hash = hashlib.md5(page_url.encode('utf-8')).hexdigest()
-                st.markdown(f"**Page:** {page_url}")
+            # DO NOT DELETE START
+            # st.subheader("LLM Intent Extraction")
+            # for page_url, page_data in st.session_state.cleaned_pages.items():
+            #     url_hash = hashlib.md5(page_url.encode('utf-8')).hexdigest()
+            #     st.markdown(f"**Page:** {page_url}")
 
-                def extract_all_text(data, prioritized_keys=None):
-                    # Recursively extract all non-empty text from prioritized fields, fallback to all text
-                    if prioritized_keys is None:
-                        prioritized_keys = ['chunks', 'content', 'headers', 'faqs_clean']
-                    texts = []
-                    def _extract(obj):
-                        if isinstance(obj, dict):
-                            for k, v in obj.items():
-                                if k in prioritized_keys:
-                                    _extract(v)
-                                elif isinstance(v, (dict, list)):
-                                    _extract(v)
-                                elif isinstance(v, str) and v.strip():
-                                    texts.append(v.strip())
-                        elif isinstance(obj, list):
-                            for item in obj:
-                                _extract(item)
-                        elif isinstance(obj, str) and obj.strip():
-                            texts.append(obj.strip())
-                    # First try prioritized keys
-                    for key in prioritized_keys:
-                        if key in data:
-                            _extract(data[key])
-                    # If still empty, fallback to all text in the structure
-                    if not texts:
-                        _extract(data)
-                    return '\n'.join(texts)
+            #     def extract_all_text(data, prioritized_keys=None):
+            #         # Recursively extract all non-empty text from prioritized fields, fallback to all text
+            #         if prioritized_keys is None:
+            #             prioritized_keys = ['chunks', 'content', 'headers', 'faqs_clean']
+            #         texts = []
+            #         def _extract(obj):
+            #             if isinstance(obj, dict):
+            #                 for k, v in obj.items():
+            #                     if k in prioritized_keys:
+            #                         _extract(v)
+            #                     elif isinstance(v, (dict, list)):
+            #                         _extract(v)
+            #                     elif isinstance(v, str) and v.strip():
+            #                         texts.append(v.strip())
+            #             elif isinstance(obj, list):
+            #                 for item in obj:
+            #                     _extract(item)
+            #             elif isinstance(obj, str) and obj.strip():
+            #                 texts.append(obj.strip())
+            #         # First try prioritized keys
+            #         for key in prioritized_keys:
+            #             if key in data:
+            #                 _extract(data[key])
+            #         # If still empty, fallback to all text in the structure
+            #         if not texts:
+            #             _extract(data)
+            #         return '\n'.join(texts)
 
-                cleaned_text = extract_all_text(page_data)
+            #     cleaned_text = extract_all_text(page_data)
 
-                with st.expander(f"Show cleaned text sent to LLM for {page_url}", expanded=False):
-                    st.write("--- Cleaned Data Structure ---")
-                    st.json(page_data)
-                    st.write("--- Cleaned Text Sent to LLM ---")
-                    st.write(cleaned_text if cleaned_text else "(No text found)")
-                llm_btn = st.button(f"Extract Intents with LLM", key=f"llm_extract_{url_hash}")
-                if llm_btn:
-                    if not cleaned_text:
-                        st.warning("No cleaned text found for this page. Cannot extract intents.")
-                    else:
-                        try:
-                            llm_result = llm_processor.analyze_contact_center_intents(cleaned_text)
-                            st.markdown("### LLM-Extracted Intents Table")
-                            if llm_result and 'intent_map' in llm_result:
-                                st.markdown(llm_result['intent_map'])
-                                # Save intent map as markdown file
-                                import datetime
-                                import hashlib
-                                import os
-                                os.makedirs('crawl_results', exist_ok=True)
-                                safe_url = page_url.replace('https://', '').replace('http://', '').replace('/', '_')
-                                url_hash = hashlib.md5(page_url.encode('utf-8')).hexdigest()
-                                filename = f"intent_table_{safe_url}_{url_hash}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
-                                save_path = os.path.join('crawl_results', filename)
-                                with open(save_path, 'w', encoding='utf-8') as f:
-                                    f.write(llm_result['intent_map'])
-                                with st.expander("Show LLM Prompt", expanded=False):
-                                    st.code(llm_result.get('llm_prompt', ''), language='markdown')
-                                st.success(f"Intent table saved to {save_path}")
-                            else:
-                                st.warning("No intent map returned by LLM.")
-                        except Exception as e:
-                            st.error(f"LLM extraction failed: {str(e)}")
+            #     with st.expander(f"Show cleaned text sent to LLM for {page_url}", expanded=False):
+            #         st.write("--- Cleaned Data Structure ---")
+            #         st.json(page_data)
+            #         st.write("--- Cleaned Text Sent to LLM ---")
+            #         st.write(cleaned_text if cleaned_text else "(No text found)")
+            #     llm_btn = st.button(f"Extract Intents with LLM", key=f"llm_extract_{url_hash}_{page_url}")
+            #     if llm_btn:
+            #         if not cleaned_text:
+            #             st.warning("No cleaned text found for this page. Cannot extract intents.")
+            #         else:
+            #             try:
+            #                 llm_result = llm_processor.analyze_contact_center_intents(cleaned_text)
+            #                 st.markdown("### LLM-Extracted Intents Table")
+            #                 if llm_result and 'intent_map' in llm_result:
+            #                     st.markdown(llm_result['intent_map'])
+            #                     # Save intent map as markdown file
+            #                     import datetime
+            #                     import hashlib
+            #                     import os
+            #                     os.makedirs('crawl_results', exist_ok=True)
+            #                     safe_url = page_url.replace('https://', '').replace('http://', '').replace('/', '_')
+            #                     url_hash = hashlib.md5(page_url.encode('utf-8')).hexdigest()
+            #                     filename = f"intent_table_{safe_url}_{url_hash}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
+            #                     save_path = os.path.join('crawl_results', filename)
+            #                     with open(save_path, 'w', encoding='utf-8') as f:
+            #                         f.write(llm_result['intent_map'])
+            #                     with st.expander("Show LLM Prompt", expanded=False):
+            #                         st.code(llm_result.get('llm_prompt', ''), language='markdown')
+            #                     st.success(f"Intent table saved to {save_path}")
+            #                 else:
+            #                     st.warning("No intent map returned by LLM.")
+            #             except Exception as e:
+            #                 st.error(f"LLM extraction failed: {str(e)}")
+            # DO NOT DELETE END
         else:
             st.header("Raw Scraped Data Preview")
             for page_url, page_data in st.session_state.pages.items():
@@ -609,7 +615,7 @@ def main():
                     url_hash = hashlib.md5(page_url.encode('utf-8')).hexdigest()
                     col1, col2 = st.columns(2)
                     with col1:
-                        if st.button(f"Save JSON", key=f"save_json_{url_hash}_raw"):
+                        if st.button(f"Save JSON", key=f"save_json_{url_hash}_raw_{page_url}"):
                             import datetime
                             import os
                             safe_url = page_url.replace('https://', '').replace('http://', '').replace('/', '_')
@@ -638,8 +644,8 @@ def main():
 
     # --- ChromaDB Entries Tab ---
     st.markdown("---")
-    tabs = st.tabs(["Main", "ChromaDB Entries"])
-    with tabs[1]:
+    tabs = st.tabs(["Intent Maps","Knowledge base"])
+    with tabs[0]:
         st.header("ChromaDB Entries")
         from chromadb_store import get_chromadb_client, get_or_create_cleaned_collection
         client = get_chromadb_client()
