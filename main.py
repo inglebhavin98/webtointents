@@ -400,9 +400,28 @@ def main():
     if 'pages' in st.session_state and st.session_state.pages:
         # Clean Scraped Data button
         if st.button("Clean Scraped Data"):
+            import datetime
+            import hashlib
+            import os
             cleaned_pages = {}
+            os.makedirs('crawl_results', exist_ok=True)
             for page_url, page_data in st.session_state.pages.items():
-                cleaned_pages[page_url] = clean_scraped_data(page_data)
+                cleaned = clean_scraped_data(page_data)
+                cleaned_pages[page_url] = cleaned
+                # Save cleaned data to JSON file
+                safe_url = page_url.replace('https://', '').replace('http://', '').replace('/', '_')
+                url_hash = hashlib.md5(page_url.encode('utf-8')).hexdigest()
+                filename = f"cleaned_{safe_url}_{url_hash}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+                save_path = os.path.join('crawl_results', filename)
+                with open(save_path, 'w', encoding='utf-8') as f:
+                    import json
+                    json.dump(cleaned, f, indent=2, ensure_ascii=False)
+                # Store in ChromaDB
+                try:
+                    from chromadb_store import upsert_cleaned_page
+                    upsert_cleaned_page(page_url, cleaned)
+                except Exception as e:
+                    st.warning(f"ChromaDB storage failed for {page_url}: {str(e)}")
             st.session_state.cleaned_pages = cleaned_pages
             st.session_state.show_cleaned = True
 
@@ -489,8 +508,20 @@ def main():
                             st.markdown("### LLM-Extracted Intents Table")
                             if llm_result and 'intent_map' in llm_result:
                                 st.markdown(llm_result['intent_map'])
+                                # Save intent map as markdown file
+                                import datetime
+                                import hashlib
+                                import os
+                                os.makedirs('crawl_results', exist_ok=True)
+                                safe_url = page_url.replace('https://', '').replace('http://', '').replace('/', '_')
+                                url_hash = hashlib.md5(page_url.encode('utf-8')).hexdigest()
+                                filename = f"intent_table_{safe_url}_{url_hash}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
+                                save_path = os.path.join('crawl_results', filename)
+                                with open(save_path, 'w', encoding='utf-8') as f:
+                                    f.write(llm_result['intent_map'])
                                 with st.expander("Show LLM Prompt", expanded=False):
                                     st.code(llm_result.get('llm_prompt', ''), language='markdown')
+                                st.success(f"Intent table saved to {save_path}")
                             else:
                                 st.warning("No intent map returned by LLM.")
                         except Exception as e:
