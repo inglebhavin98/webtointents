@@ -348,15 +348,20 @@ def main():
         st.session_state.parsed_urls = []
     
     # URL input and sitemap upload interface
-    url = st.text_input("Enter URL to analyze")
+    url_input = st.text_input("Enter URL(s) to analyze (comma-separated for batch)")
     uploaded_file = st.file_uploader("Or upload a sitemap", type=['xml'])
-    
+
+    # Parse multi-URL input
+    urls = []
+    if url_input:
+        urls = [u.strip() for u in url_input.split(',') if u.strip()]
+
     # Parse sitemap if uploaded
     if uploaded_file and st.button("Parse Sitemap"):
         st.session_state.parsed_urls = parse_uploaded_sitemap(uploaded_file)
         if st.session_state.parsed_urls:
             st.success(f"Successfully parsed {len(st.session_state.parsed_urls)} URLs from sitemap")
-    
+
     # Display URL selection if URLs are parsed
     if st.session_state.parsed_urls:
         st.subheader("Select URLs to Analyze")
@@ -366,35 +371,57 @@ def main():
             default=st.session_state.parsed_urls[:5]  # Default to first 5 URLs
         )
         st.write(f"Selected {len(selected_urls)} URLs for analysis")
-    
+    else:
+        selected_urls = []
+
     if st.button("Start Analysis"):
-        if url or selected_urls:
+        # Use batch URLs if provided, else use selected_urls from sitemap
+        urls_to_process = urls if urls else selected_urls
+        if urls_to_process:
             with st.spinner("Crawling pages..."):
                 pages = {}
-                if url:
-                    # Crawl single URL
-                    page_data = crawler.crawl_url(url)
-                    if page_data:
-                        pages[url] = page_data
-                else:
-                    # Crawl selected URLs from sitemap
-                    progress_bar = st.progress(0)
-                    for i, url in enumerate(selected_urls):
-                        try:
-                            logger.info(f"Crawling URL: {url}")
-                            with st.spinner(f"Crawling {url}..."):
-                                page_data = crawler.crawl_url(url)
-                                if page_data:
-                                    pages[url] = page_data
-                            progress_bar.progress((i + 1) / len(selected_urls))
-                        except Exception as e:
-                            logger.error(f"Error crawling {url}: {str(e)}")
-                            continue
+                progress_bar = st.progress(0)
+                for i, url in enumerate(urls_to_process):
+                    try:
+                        logger.info(f"Crawling URL: {url}")
+                        with st.spinner(f"Crawling {url}..."):
+                            page_data = crawler.crawl_url(url)
+                            if page_data:
+                                pages[url] = page_data
+                        progress_bar.progress((i + 1) / len(urls_to_process))
+                    except Exception as e:
+                        logger.error(f"Error crawling {url}: {str(e)}")
+                        continue
                 if pages:
                     st.session_state.pages = pages
                     st.session_state.cleaned_pages = None
                     st.session_state.show_cleaned = False
                     st.success(f"Successfully crawled {len(pages)} pages")
+                    # --- Automatically move to Clean Scraped Data step ---
+                    import datetime
+                    import hashlib
+                    import os
+                    cleaned_pages = {}
+                    os.makedirs('crawl_results', exist_ok=True)
+                    for page_url, page_data in st.session_state.pages.items():
+                        cleaned = clean_scraped_data(page_data)
+                        cleaned_pages[page_url] = cleaned
+                        # Save cleaned data to JSON file
+                        safe_url = page_url.replace('https://', '').replace('http://', '').replace('/', '_')
+                        url_hash = hashlib.md5(page_url.encode('utf-8')).hexdigest()
+                        filename = f"cleaned_{safe_url}_{url_hash}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+                        save_path = os.path.join('crawl_results', filename)
+                        with open(save_path, 'w', encoding='utf-8') as f:
+                            import json
+                            json.dump(cleaned, f, indent=2, ensure_ascii=False)
+                        # Store in ChromaDB
+                        try:
+                            from chromadb_store import upsert_cleaned_page
+                            upsert_cleaned_page(page_url, cleaned)
+                        except Exception as e:
+                            st.warning(f"ChromaDB storage failed for {page_url}: {str(e)}")
+                    st.session_state.cleaned_pages = cleaned_pages
+                    st.session_state.show_cleaned = True
 
     # Show cleaning CTA and previews if pages are in session state
     if 'pages' in st.session_state and st.session_state.pages:
