@@ -19,12 +19,15 @@ logger = logging.getLogger(__name__)
 
 class WebsiteCrawler:
     def __init__(self):
+        print(f"*** WebsiteCrawler.__init__")
+        # Initialize Chrome options for headless browsing
         self.chrome_options = Options()
         self.chrome_options.add_argument('--headless')
         self.chrome_options.add_argument('--no-sandbox')
         self.chrome_options.add_argument('--disable-dev-shm-usage')
 
     def crawl(self, base_url: str) -> Dict[str, Any]:
+        print(f"*** WebsiteCrawler.crawl")
         """Crawl a website starting from the base URL and return a dictionary of page data."""
         logger.info(f"Starting crawl from base URL: {base_url}")
         
@@ -54,6 +57,7 @@ class WebsiteCrawler:
         return pages
 
     def create_sitemap(self, base_url):
+        print(f"*** WebsiteCrawler.create_sitemap")
         """Scan website and create sitemap.xml file"""
         print(f"Starting sitemap creation for {base_url}")
         visited = set()
@@ -110,6 +114,7 @@ class WebsiteCrawler:
         return sitemap_path, list(visited)
 
     def generate_sitemap(self, base_url):
+        print(f"*** WebsiteCrawler.generate_sitemap")
         """Generate sitemap by crawling the website"""
         print("Generating sitemap...")
         visited = set()
@@ -154,6 +159,7 @@ class WebsiteCrawler:
         return list(visited)
 
     def parse_sitemap(self, base_url):
+        print(f"*** WebsiteCrawler.parse_sitemap")
         """Parse existing sitemap.xml or generate new one"""
         if not os.path.exists('sitemap.xml'):
             return self.generate_sitemap(base_url)
@@ -168,6 +174,7 @@ class WebsiteCrawler:
             return self.generate_sitemap(base_url)
 
     def crawl_url(self, url, max_retries=3):
+        print(f"*** WebsiteCrawler.crawl_url")
         driver = None
         for attempt in range(max_retries):
             try:

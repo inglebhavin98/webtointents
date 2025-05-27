@@ -5,6 +5,9 @@ from dotenv import load_dotenv
 from typing import List, Dict, Any
 import json
 import uuid
+from groq import Groq  # NEW: Import Groq
+import re  # Import re for regular expression operations
+
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
@@ -16,24 +19,32 @@ with open(os.path.join(os.path.dirname(__file__), "contact_center_intent_prompt.
 
 class LLMProcessor:
     def __init__(self):
+        print(f"*** LLMProcessor.__init__")
+
         """Initialize the LLM processor with OpenRouter configuration."""
         try:
             load_dotenv()
-            self.api_key = os.getenv('OPENROUTER_API_KEY')
+            # self.api_key = os.getenv('OPENROUTER_API_KEY')
+            self.api_key = os.getenv('GROQ_API_KEY')
             self.site_url = os.getenv('SITE_URL', 'http://localhost:8501')
             self.site_name = os.getenv('SITE_NAME', 'Intent Discovery Tool')
             # self.model = "qwen/qwen3-0.6b-04-28:free"
-            self.model = "meta-llama/llama-3.3-8b-instruct:free"
+            # self.model = "meta-llama/llama-3.3-8b-instruct:free"
             # self.model = "meta-llama/llama-4-scout-17b-16e-instruct"
             # self.model = "meta-llama/llama-4-scout:free"
             # self.model = "qwen/qwen3-4b:free"
+
+            # self.model = "llama-3.1-8b-instant"
+            self.model = "llama-3.3-70b-versatile"  # Groq recommended production model
+
             
             if not self.api_key:
                 raise ValueError("OPENROUTER_API_KEY not found in environment variables")
             
             logger.info("Initializing OpenRouter client")
-            openai.api_key = self.api_key
-            openai.api_base = "https://openrouter.ai/api/v1"
+            # openai.api_key = self.api_key
+            self.client = Groq(api_key=self.api_key)
+            # openai.api_base = "https://openrouter.ai/api/v1"
             logger.info(f"OpenRouter client initialized successfully with model: {self.model}")
             
         except Exception as e:
@@ -41,6 +52,7 @@ class LLMProcessor:
             raise
 
     def extract_page_context(self, text: str) -> Dict[str, Any]:
+        print(f"*** LLMProcessor.extract_page_context")
         """Step 1: Deep content understanding and classification."""
         try:
             if not text or not isinstance(text, str):
@@ -105,11 +117,12 @@ Raw Content:
             logger.debug(f"System: 'You are an expert content and intent analyst.'")
             logger.debug(f"User prompt: {prompt_1}")
 
-            completion = openai.ChatCompletion.create(
-                headers={
-                    "HTTP-Referer": self.site_url,
-                    "X-Title": self.site_name,
-                },
+            # completion = openai.ChatCompletion.create(
+            completion = self.client.chat.completions.create(
+                # headers={
+                #     "HTTP-Referer": self.site_url,
+                #     "X-Title": self.site_name,
+                # },
                 model=self.model,
                 messages=[
                     {"role": "system", "content": "You are an expert content and intent analyst."},
@@ -131,6 +144,7 @@ Raw Content:
             return None
 
     def analyze_content(self, text: str) -> Dict[str, Any]:
+        print(f"*** LLMProcessor.analyze_content")
         """Step 2: Comprehensive intent and entity analysis."""
         try:
             logger.info("Starting enhanced content analysis...")
@@ -238,6 +252,7 @@ Analyze and extract all insights using this structure:
             return None
 
     def process_page_for_intents(self, page_data: Dict[str, Any]) -> Dict[str, Any]:
+        print(f"*** LLMProcessor.process_page_for_intents")
         """Process a page's content to generate intents and insights using only LLM (NLPProcessor temporarily disabled)."""
         try:
             logger.info("Starting page processing for intents (LLM only, NLP disabled)")
@@ -298,6 +313,7 @@ Analyze and extract all insights using this structure:
             return None
 
     def generate_intent(self, text):
+        print(f"*** LLMProcessor.generate_intent")
         """Generate intent from text using DeepSeek model."""
         try:
             if not text or not isinstance(text, str):
@@ -322,11 +338,12 @@ Analyze and extract all insights using this structure:
             logger.debug(f"User prompt: {prompt}")
 
             logger.info("Sending request to OpenRouter")
-            completion = openai.ChatCompletion.create(
-                headers={
-                    "HTTP-Referer": self.site_url,
-                    "X-Title": self.site_name,
-                },
+            # completion = openai.ChatCompletion.create(
+            completion = self.client.chat.completions.create(
+                # headers={
+                #     "HTTP-Referer": self.site_url,
+                #     "X-Title": self.site_name,
+                # },
                 model=self.model,
                 messages=[
                     {
@@ -348,6 +365,7 @@ Analyze and extract all insights using this structure:
             return None
 
     def generate_intent_hierarchy(self, texts):
+        print(f"*** LLMProcessor.generate_intent_hierarchy 1")
         """Generate a hierarchical structure of intents from multiple texts."""
         try:
             if not texts or not isinstance(texts, list):
@@ -405,6 +423,7 @@ Return a JSON object with the following structure:
             return None
 
     def generate_questions(self, content: str, num_questions: int = 5) -> List[str]:
+        print(f"*** LLMProcessor.generate_questions")
         """Generate questions from content using DeepSeek model."""
         if not content.strip():
             logger.warning("Empty content provided to generate_questions")
@@ -454,6 +473,7 @@ Return a JSON object with the following structure:
             return []
     
     def generate_responses(self, question: str, context: str) -> str:
+        print(f"*** LLMProcessor.generate_responses")
         """Generate a response to a question using the provided context."""
         if not question.strip() or not context.strip():
             logger.warning("Empty question or context provided to generate_responses")
@@ -499,6 +519,7 @@ Return a JSON object with the following structure:
             return ""
     
     def generate_paraphrases(self, text: str, num_variations: int = 3) -> List[str]:
+        print(f"*** LLMProcessor.generate_paraphrases")
         """Generate paraphrased variations of a text."""
         if not text.strip():
             logger.warning("Empty text provided to generate_paraphrases")
@@ -544,6 +565,7 @@ Return a JSON object with the following structure:
             return []
 
     def generate_intent_hierarchy(self, hierarchy_input: Dict[str, Any]) -> Dict[str, Any]:
+        print(f"*** LLMProcessor.generate_intent_hierarchy 2")
         """Generate a hierarchical structure of intents using the input data."""
         try:
             if not hierarchy_input or not isinstance(hierarchy_input, dict):
@@ -624,6 +646,7 @@ Return a JSON object with the following structure:
             return None
 
     def analyze_contact_center_intents(self, page_data: Dict[str, Any]) -> Dict[str, Any]:
+        print(f"*** LLMProcessor.analyze_contact_center_intents first")
         """Advanced intent analysis for contact center transformation."""
         try:
             if not page_data:
@@ -726,6 +749,7 @@ Important:
             return None
 
     def analyze_contact_center_intents(self, html_content: str) -> dict:
+        print(f"*** LLMProcessor.analyze_contact_center_intents 2nd")
         """
         Specialized analysis for contact center transformation: returns a structured Intent Map
         following the user's detailed prompt.
@@ -742,11 +766,12 @@ Important:
             prompt = prompt_template.format(html_content=html_content)
             logger.info("Sending specialized contact center intent prompt to LLM...")
             logger.debug(f"Prompt sent to LLM:\n{prompt}")
-            completion = openai.ChatCompletion.create(
-                headers={
-                    "HTTP-Referer": self.site_url,
-                    "X-Title": self.site_name,
-                },
+            # completion = openai.ChatCompletion.create(
+            completion = self.client.chat.completions.create(
+                # headers={
+                #     "HTTP-Referer": self.site_url,
+                #     "X-Title": self.site_name,
+                # },
                 model=self.model,
                 messages=[
                     {"role": "system", "content": "You are an Intent Discovery Expert for contact center transformation."},
@@ -762,6 +787,7 @@ Important:
             return None
 
     def _prepare_content_for_analysis(self, page_data: Dict[str, Any]) -> str:
+        print(f"*** LLMProcessor._prepare_content_for_analysis")
         """Prepare structured content for intent analysis."""
         try:
             sections = []

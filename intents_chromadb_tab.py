@@ -2,6 +2,9 @@ import streamlit as st
 from chromadb_store import get_chromadb_client, get_or_create_intents_collection
 
 def show_intents_chromadb_tab():
+    """Display the Intents ChromaDB collection in a Streamlit tab."""
+    print(f"*** show_intents_chromadb_tab")  # Debugging line
+    
     if 'intents_chromadb_outputs' not in st.session_state:
         st.session_state.intents_chromadb_outputs = {}
     st.header("Intents ChromaDB Collection")

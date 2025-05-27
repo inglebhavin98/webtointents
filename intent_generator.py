@@ -12,9 +12,11 @@ logger = logging.getLogger(__name__)
 
 class IntentGenerator:
     def __init__(self, llm_processor: LLMProcessor):
+        print(f"*** IntentGenerator.__init__")
         self.llm_processor = llm_processor
         
     def create_url_hierarchy(self, urls: List[str]) -> Dict[str, Any]:
+        print(f"*** IntentGenerator.create_url_hierarchy")
         """Create a hierarchy based on URL structure."""
         hierarchy = defaultdict(list)
         base_paths = set()
@@ -36,6 +38,7 @@ class IntentGenerator:
         }
     
     def detect_intent_collisions(self, intents: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        print(f"*** IntentGenerator.detect_intent_collisions")
         """Detect potential collisions between intents using LLM analysis."""
         collisions = []
         
@@ -70,6 +73,7 @@ class IntentGenerator:
         return collisions
     
     def generate_intent_hierarchy(self, crawled_data: List[Dict[str, Any]]) -> Dict[str, Any]:
+        print(f"*** IntentGenerator.generate_intent_hierarchy")
         """Generate a complete intent hierarchy from crawled data using only LLM."""
         logger.info("Generating intent hierarchy from crawled data...")
         
@@ -172,6 +176,7 @@ class IntentGenerator:
         return final_hierarchy
     
     def export_intents(self, hierarchy: Dict[str, Any], format: str = 'json') -> str:
+        print(f"*** IntentGenerator.export_intents")
         """Export intents in the specified format."""
         if format == 'json':
             return json.dumps(hierarchy, indent=2)

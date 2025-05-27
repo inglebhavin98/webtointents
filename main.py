@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 def initialize_components():
+    print(f"*** initialize_components")
     """Initialize all required components with proper error handling."""
     try:
         logger.info("Initializing components...")
@@ -35,6 +36,7 @@ def initialize_components():
         return None, None
 
 def parse_uploaded_sitemap(uploaded_file):
+    print(f"*** parse_uploaded_sitemap")
     """Parse an uploaded sitemap XML file and return list of URLs."""
     try:
         content = uploaded_file.getvalue().decode('utf-8')
@@ -60,6 +62,7 @@ def parse_uploaded_sitemap(uploaded_file):
         return []
 
 def display_intent_analysis(intent: Dict[str, Any]):
+    print(f"*** display_intent_analysis")
     """Display intent analysis in a structured format."""
     try:
         # Page Information
@@ -185,6 +188,7 @@ def display_intent_analysis(intent: Dict[str, Any]):
         st.error(f"Error displaying intent analysis: {str(e)}")
 
 def display_contact_center_intent_map(intent_map: dict):
+    print(f"*** display_contact_center_intent_map")
     """Display the specialized contact center intent map in a readable format."""
     if not intent_map:
         st.error("No intent map data to display.")
@@ -238,11 +242,14 @@ def display_contact_center_intent_map(intent_map: dict):
                 st.write(f"- {url}")
 
 def clean_scraped_data(page_data: dict) -> dict:
+    print(f"*** clean_scraped_data")
     """Clean and preprocess scraped page data before LLM analysis."""
     import re
     from collections import OrderedDict
 
     def deduplicate_list(items):
+        """Deduplicate a list while preserving order and ignoring case."""
+        print(f"*** deduplicate_list")
         seen = set()
         deduped = []
         for item in items:
@@ -253,6 +260,8 @@ def clean_scraped_data(page_data: dict) -> dict:
         return deduped
 
     def remove_empty_fields(d):
+        """Recursively remove empty fields from a dictionary or list."""
+        print(f"*** remove_empty_fields")
         if isinstance(d, dict):
             return {k: remove_empty_fields(v) for k, v in d.items() if v not in [None, '', [], {}]}
         elif isinstance(d, list):
@@ -261,6 +270,8 @@ def clean_scraped_data(page_data: dict) -> dict:
             return d
 
     def chunk_by_headers(content_blocks):
+        """Chunk content by headers (h2/h3) or paragraph blocks."""
+        print(f"*** chunk_by_headers")
         # Simple chunking by h2/h3 or paragraph blocks
         chunks = []
         current = []
@@ -276,6 +287,9 @@ def clean_scraped_data(page_data: dict) -> dict:
         return chunks
 
     def normalize_text(text):
+        """Normalize text by removing CTAs, expanding acronyms, and cleaning."""
+        print(f"*** normalize_text")
+
         # Remove CTAs (simple heuristics)
         cta_patterns = [r'click here', r'contact us', r'learn more', r'sign up', r'get started']
         for pat in cta_patterns:
@@ -332,6 +346,7 @@ def clean_scraped_data(page_data: dict) -> dict:
 
 def main():
     st.set_page_config(page_title="Intent Scraper", layout="wide")
+    print(f"*** main")
     page = st.sidebar.selectbox("Choose a page", ["Intent Scraper", "Dashboard"])
     if page == "Dashboard":
         # use dashboard_route from dashboard.py
@@ -399,6 +414,7 @@ def main():
                 stop_button_placeholder = st.empty()
                 # Show stop button before crawling loop starts
                 def stop_crawl_callback():
+                    print(f"*** stop_crawl_callback")
                     st.session_state.stop_crawl = True
                 stop_button_placeholder.button("Stop Crawling", on_click=stop_crawl_callback, key="stop_crawling_main")
                 with st.spinner("Crawling pages..."):
@@ -467,6 +483,7 @@ def main():
                         st.session_state.show_cleaned = True
                 # Show stop button while crawling
                 def stop_crawl_callback():
+                    print(f"*** stop_crawl_callback")
                     st.session_state.stop_crawl = True
                 stop_button_placeholder.button("Stop Crawling", on_click=stop_crawl_callback)
 
@@ -728,17 +745,21 @@ def main():
                 llm_processor = LLMProcessor()
                 with st.spinner("Thinking..."):
                     import openai
-                    response = openai.ChatCompletion.create(
-                        headers={
-                            "HTTP-Referer": llm_processor.site_url,
-                            "X-Title": llm_processor.site_name,
-                        },
+                    # response = openai.ChatCompletion.create(
+                    from groq import Groq
+                    import os
+                    groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+                    response = groq_client.chat.completions.create(
+                        # headers={
+                        #     "HTTP-Referer": llm_processor.site_url,
+                        #     "X-Title": llm_processor.site_name,
+                        # },
                         model=llm_processor.model,
                         messages=[
                             {"role": "system", "content": "You are a helpful assistant for knowledge base Q&A."},
                             {"role": "user", "content": llm_prompt}
                         ],
-                        temperature=0.3
+                        temperature=0.5
                     )
                     answer = response.choices[0].message.content.strip()
                 # Update chat history

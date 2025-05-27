@@ -26,6 +26,7 @@ Please list the 10 most probable user intents found in this content.
 Do not add explanations or formatting — just output a plain numbered list.'''
 
 def call_llm_for_intents(llm, cleaned_content):
+    print(f"*** Calling LLM for intents with content: {cleaned_content[:50]}...")  # Debugging line
     prompt = INTENT_EXTRACTION_PROMPT.replace("{{cleaned_content}}", cleaned_content)
     response = llm.generate_intent(prompt)
     # Parse numbered list into a Python list
@@ -38,12 +39,14 @@ def call_llm_for_intents(llm, cleaned_content):
     return []
 
 async def async_generate_intent(llm, cleaned_content):
+    print(f"*** Async generating intent for content")  # Debugging line
     loop = asyncio.get_event_loop()
     result = await loop.run_in_executor(None, call_llm_for_intents, llm, cleaned_content)
     await asyncio.sleep(6)  # Add delay to avoid rate limit
     return result
 
 def cluster_and_summarize_intents_llm(intents_collection):
+    print(f"*** Clustering and summarizing intents")  # Debugging line
     # 1. Extract all intents from the intents collection
     results = intents_collection.get(include=["documents", "metadatas"])
     docs = results.get("documents", [])
@@ -82,6 +85,7 @@ Output as a markdown table with columns: Grouped Intent | Frequency | Sample Var
     return response
 
 def dashboard_route():
+    print(f"*** Dashboard route")  # Debugging line
     st.title("Web Pages Dashboard")
     client = get_chromadb_client()
     web_pages_collection = get_or_create_cleaned_collection(client)

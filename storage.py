@@ -9,6 +9,9 @@ class StorageHandler:
         os.makedirs(self.storage_dir, exist_ok=True)
     
     def save_crawl_results(self, results, url):
+        print(f"*** save_crawl_results")
+        """Save crawl results to a JSON file."""
+
         if not results:
             return
             
@@ -50,6 +53,7 @@ class StorageHandler:
         return filename
     
     def get_crawl_results(self, filename):
+        print(f"*** get_crawl_results")
         try:
             filepath = os.path.join(self.storage_dir, filename)
             with open(filepath, 'r') as f:
@@ -58,6 +62,7 @@ class StorageHandler:
             return None
             
     def list_crawls(self):
+        print(f"*** list_crawls")
         if not os.path.exists(self.storage_dir):
             return []
         return [f for f in os.listdir(self.storage_dir) if f.startswith('crawl_')]

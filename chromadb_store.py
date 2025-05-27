@@ -11,6 +11,7 @@ def get_chromadb_client():
     return chromadb.PersistentClient(path=chroma_dir)
 
 def get_or_create_cleaned_collection(client=None):
+    print(f"*** get_or_create_cleaned_collection")
     """Get or create the 'cleaned_pages' collection."""
     if client is None:
         client = get_chromadb_client()
@@ -21,6 +22,7 @@ def get_or_create_cleaned_collection(client=None):
     return collection
 
 def get_or_create_intents_collection(client=None):
+    print(f"*** get_or_create_intents_collection")
     """Get or create the 'intents' collection for storing intent analysis results."""
     if client is None:
         client = get_chromadb_client()
@@ -31,6 +33,7 @@ def get_or_create_intents_collection(client=None):
     return collection
 
 def query_similar_pages(query_text, n_results=5):
+    print(f"*** query_similar_pages")
     """Query ChromaDB for similar pages to the input text."""
     client = get_chromadb_client()
     collection = get_or_create_cleaned_collection(client)
@@ -51,6 +54,7 @@ collection = client.get_or_create_collection(COLLECTION_NAME)
 MODEL = SentenceTransformer('all-MiniLM-L6-v2')  # 384 dims, free, local
 
 def get_page_text_for_embedding(page_data):
+    print(f"*** get_page_text_for_embedding")
     # Concatenate all relevant text fields for embedding
     texts = []
     prioritized_keys = ["chunks", "content", "headers", "faqs_clean"]
@@ -68,6 +72,7 @@ def get_page_text_for_embedding(page_data):
     # Fallback: if still empty, extract all string values recursively
     if not any(t.strip() for t in texts):
         def extract_all_strings(obj):
+            print(f"*** extract_all_strings")
             found = []
             if isinstance(obj, dict):
                 for v in obj.values():
@@ -82,10 +87,12 @@ def get_page_text_for_embedding(page_data):
     return "\n".join([t for t in texts if t.strip()])
 
 def embed_text(text):
+    print(f"*** embed_text")
     # Use SentenceTransformer to get embedding (free, local)
     return MODEL.encode(text).tolist()
 
 def upsert_cleaned_page(url, page_data):
+    print(f"*** upsert_cleaned_page")
     text = get_page_text_for_embedding(page_data)
     if not text.strip():
         raise ValueError("No text found for embedding.")
