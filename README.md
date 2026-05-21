@@ -38,57 +38,240 @@ Both modes share the same crawling, cleaning, embedding, and vector storage pipe
 
 ## Architecture
 
-The project is a modular, script-based pipeline driven by a **Streamlit** frontend. There is no formal backend API or task queue — all orchestration happens inside the Streamlit app.
+The project is a modular, script-based pipeline driven by a **Streamlit** frontend. There is no formal backend API or task queue — all orchestration happens inside the Streamlit app (`main.py`), which acts as both the UI layer and the workflow engine.
 
 ### Component Map
 
-| Component | Role | Key File |
-|-----------|------|----------|
-| **Frontend / Router** | Streamlit app, page routing, UI layout | `main.py` |
-| **Crawler** | Headless browser scraping + sitemap parsing | `crawler.py` |
-| **LLM Engine** | Prompt construction, API calls, JSON parsing | `llm_processor.py` |
-| **Intent Logic** | URL hierarchies, collision detection, batching | `intent_generator.py` |
-| **Vector Store** | ChromaDB client, embedding, similarity search | `chromadb_store.py` |
-| **File Store** | JSON serialization of crawl results | `storage.py` |
-| **Dashboard** | Batch processing UI, async LLM calls, clustering | `dashboard.py` |
-| **Intents Tab** | Read-only viewer for the `intents` ChromaDB collection | `intents_chromadb_tab.py` |
+| Component | Role | Key File | Key Classes / Functions |
+|-----------|------|----------|------------------------|
+| **Frontend / Router** | Streamlit app, page routing, tab layout, session state management | `main.py` | `main()`, `initialize_components()`, `clean_scraped_data()`, `parse_uploaded_sitemap()`, `display_contact_center_intent_map()` |
+| **Crawler** | Headless browser scraping + sitemap parsing/generation | `crawler.py` | `WebsiteCrawler`, `crawl_url()`, `crawl()`, `create_sitemap()`, `parse_sitemap()` |
+| **LLM Engine** | Prompt construction, Groq API calls, JSON/markdown parsing, fallback handling | `llm_processor.py` | `LLMProcessor`, `extract_page_context()`, `analyze_content()`, `process_page_for_intents()`, `analyze_contact_center_intents()`, `generate_intent()` |
+| **Intent Logic** | URL hierarchies, collision detection (broken), batch orchestration, export | `intent_generator.py` | `IntentGenerator`, `create_url_hierarchy()`, `detect_intent_collisions()`, `generate_intent_hierarchy()`, `export_intents()` |
+| **Vector Store** | ChromaDB client, local embedding, similarity search, collection management | `chromadb_store.py` | `get_chromadb_client()`, `get_or_create_cleaned_collection()`, `get_or_create_intents_collection()`, `embed_text()`, `upsert_cleaned_page()`, `query_similar_pages()` |
+| **File Store** | JSON serialization of crawl results | `storage.py` | `StorageHandler`, `save_crawl_results()`, `get_crawl_results()` |
+| **Dashboard** | Batch processing UI, async LLM calls, clustering/summarization | `dashboard.py` | `dashboard_route()`, `call_llm_for_intents()`, `async_generate_intent()`, `cluster_and_summarize_intents_llm()` |
+| **Intents Tab** | Read-only viewer for the `intents` ChromaDB collection | `intents_chromadb_tab.py` | `show_intents_chromadb_tab()` |
+
+---
 
 ### Data Flow
 
+The system has a single ingestion pipeline that fans out into two consumption paths.
+
+#### Ingestion Pipeline (Shared by Both Modes)
+
 ```
-User (Streamlit)
+User input (URLs or sitemap XML)
    |
    v
-main.py ------> crawler.py (Selenium + BeautifulSoup)
-   |                |
-   |                v
-   |         storage.py (JSON files in crawl_results/)
-   |                |
-   |                v
-   |         chromadb_store.py (embed + upsert to ChromaDB)
-   |                |
-   v                v
-llm_processor.py <--- (reads cleaned text from ChromaDB or session state)
+main.py: parse_uploaded_sitemap()  OR  url_input.split(',')
    |
    v
-intent_generator.py (URL hierarchy, collision logic)
+crawler.py: WebsiteCrawler.crawl_url(url)
+   |   - Spins up headless Chrome via webdriver-manager
+   |   - Waits for <body> with WebDriverWait
+   |   - Extracts: title, meta, canonical, h1/h2/h3, paragraphs, FAQs, forms, links
+   |   - Classifies page type heuristically (faq/form/product/contact/about)
+   |   - Returns nested dict:
+   |       {"url": "...",
+   |        "metadata": {"title": "...", "description": "...", "page_type": "..."},
+   |        "structure": {"headers": {"h1": [...], "h2": [...]},
+   |                      "main_content": [{"tag": "p", "text": "..."}, ...],
+   |                      "faqs": [...], "forms": [...]},
+   |        "navigation": {"internal_links": [...], "external_links": [...]}}
    |
    v
-dashboard.py / main.py (render results as markdown tables)
+main.py: clean_scraped_data(page_data)
+   |   - Deduplicates headers, FAQs, content blocks (case-insensitive, order-preserving)
+   |   - Recursively removes empty/null/[]/{} fields
+   |   - Chunks content by h2/h3 boundaries into `page_data['chunks']`
+   |   - Removes CTA patterns: "click here", "contact us", "learn more", "sign up", "get started"
+   |   - Expands acronyms: FAQ → "Frequently Asked Questions"
+   |   - Tags each chunk with `chunk_id`
+   |   - Returns cleaned dict
+   |
+   +------------------>  File persistence (JSON)
+   |       main.py writes: crawl_results/cleaned_<safe_url>_<hash>_<timestamp>.json
+   |
+   +------------------>  Vector persistence (ChromaDB)
+           chromadb_store.py: upsert_cleaned_page(url, cleaned)
+               - Flattens cleaned dict into a single text string
+                 (prioritizes keys: chunks → content → headers → faqs_clean)
+               - Falls back to recursive string extraction if empty
+               - Embeds via SentenceTransformer('all-MiniLM-L6-v2') → 384-dim float vector
+               - Upserts into collection `cleaned_pages` with URL as the document ID
+                 {ids: [url], embeddings: [vec], documents: [text], metadatas: [{"source": url}]}
 ```
 
-### How RAG Chat Works
+#### Consumption Path A: Intent Discovery
 
-The chat feature uses the same `cleaned_pages` ChromaDB collection that intent discovery uses:
+There are **two sub-paths** for intent extraction, depending on where the user clicks:
 
-1. **User asks a question** in the "Knowledge Base Chat" tab.
-2. **Query embedding** — The question is embedded locally using `all-MiniLM-L6-v2`.
-3. **Retrieval** — ChromaDB returns the top-3 most similar page chunks + metadata (source URLs).
-4. **Prompt composition** — Retrieved chunks + the original question are composed into a single prompt.
-5. **LLM synthesis** — Groq returns an answer with inline source references.
-6. **Display** — Answer is shown in a simple chat history UI.
+**Path A1 — Per-Page Intent Extraction ("Intent Maps" tab in `main.py`)**
 
-This demonstrates a minimal but complete RAG pipeline with no external vector DB hosting.
+```
+main.py Intent Maps tab
+   |
+   v
+User clicks "Generate intents" next to a ChromaDB entry
+   |
+   v
+llm_processor.py: LLMProcessor.analyze_contact_center_intents(doc_text)
+   |   - Reads contact_center_intent_prompt.txt from disk at __init__ time
+   |   - Injects the cleaned page text into the template via .format()
+   |   - Calls Groq client.chat.completions.create()
+   |       model="llama-3.3-70b-versatile", temperature=0.3
+   |   - Returns: {"intent_map": "<markdown table>", "llm_prompt": "<full prompt text>"}
+   |
+   v
+main.py renders markdown table with st.markdown()
+   |
+   v
+Optionally saves as .md file to crawl_results/intent_table_...
+```
+
+**Path A2 — Batch Intent Extraction ("Dashboard" page in `dashboard.py`)**
+
+```
+dashboard.py: dashboard_route()
+   |
+   v
+User clicks "Process for Intents"
+   |
+   v
+Reads all documents from `cleaned_pages` collection (max 5 hardcoded)
+   |
+   v
+For each document:
+   dashboard.py: async_generate_intent()
+       - Wraps call_llm_for_intents() in asyncio.run_in_executor(None, ...)
+       - Uses INTENT_EXTRACTION_PROMPT (defined inline in dashboard.py):
+         "identify the top 10 most probable user intents... output a plain numbered list"
+       - Calls llm.generate_intent(prompt) → gets raw text
+       - Parses numbered list into Python list via regex: `l.split('.', 1)[1].strip()`
+       - Sleeps 6 seconds between calls to avoid Groq rate limits
+   |
+   v
+Stores results in `intents` collection:
+   {documents: [json.dumps(intent_list)], metadatas: [{"url": url}], ids: [doc_id]}
+   |
+   v
+dashboard.py: cluster_and_summarize_intents_llm(intents_collection)
+   - Reads all intent documents back from ChromaDB
+   - Flattens and deduplicates (best-effort)
+   - Sends to LLM with clustering prompt: "Cluster these intents into groups of similar meaning..."
+   - Renders markdown frequency table
+```
+
+#### Consumption Path B: RAG Chat ("Knowledge Base" tab in `main.py`)
+
+```
+main.py Knowledge Base Chat tab
+   |
+   v
+User types a question and clicks "Send"
+   |
+   v
+chromadb_store.py: embed_text(user_query)
+   - SentenceTransformer encodes query → 384-dim vector
+   |
+   v
+ChromaDB `cleaned_pages` collection.query()
+   - query_embeddings=[query_vec], n_results=3
+   - Returns top-3 document chunks + metadata (source URLs)
+   |
+   v
+main.py composes RAG prompt inline:
+   "You are a helpful assistant. Use the following context from the knowledge base..."
+   + "\n---\n".join(top_chunks)
+   + "\n\nUser question: {user_query}\n\nAnswer:"
+   |
+   v
+Groq chat.completions.create()
+   - model="llama-3.3-70b-versatile", temperature=0.5
+   - system: "You are a helpful assistant for knowledge base Q&A."
+   |
+   v
+Answer appended to st.session_state.kb_chat_history
+   - List of {"role": "user"/"assistant", "content": "..."} dicts
+   - Rendered as simple markdown in a loop
+```
+
+---
+
+### ChromaDB Schema
+
+Two collections are used. Both use the URL (or a doc ID derived from it) as the ChromaDB document ID.
+
+| Collection | Purpose | Document Content | Metadata | Embedding Model |
+|------------|---------|-------------------|----------|-----------------|
+| `cleaned_pages` | Raw scraped and cleaned page text for RAG and intent input | Flattened text string from all chunks/content/headers/faqs | `{"source": "https://..."}` | `all-MiniLM-L6-v2` (384-dim) |
+| `intents` | LLM-generated intent lists from batch dashboard processing | `json.dumps(["intent1", "intent2", ...])` | `{"url": "https://..."}` | None (no embedding stored for intent docs) |
+
+**Important:** URLs are used as ChromaDB IDs. Re-crawling the same URL performs an **upsert**, which silently overwrites the previous entry. There is no versioning or timestamp in the metadata.
+
+---
+
+### Session State Management
+
+Streamlit's `st.session_state` is the application's only runtime state store. Key session state keys and their purposes:
+
+| Key | Set In | Purpose |
+|-----|--------|---------|
+| `sitemap_urls` | `parse_uploaded_sitemap()` | Stores parsed URLs from uploaded sitemap XML |
+| `pages` | `main.py` "Start Analysis" | Raw scraped page dicts keyed by URL |
+| `cleaned_pages` | `main.py` "Start Analysis" | Cleaned page dicts keyed by URL |
+| `show_cleaned` | `main.py` "Start Analysis" | Boolean toggle for previewing cleaned vs raw data |
+| `analyzed_intents` | `main.py` | List of fully analyzed intent dicts (legacy two-step format) |
+| `chromadb_intent_outputs` | `main.py` Intent Maps tab | Dict mapping ChromaDB entry ID → `{"intent_map": "...", "llm_prompt": "..."}` |
+| `kb_chat_history` | `main.py` Knowledge Base tab | List of `{"role": "user"/"assistant", "content": "..."}` chat messages |
+| `intents_chromadb_outputs` | `intents_chromadb_tab.py` | Dict mapping intent ID → raw document string for expander display |
+| `stop_crawl` | `stop_crawl_callback()` | Boolean flag checked once per loop iteration to break the crawling loop |
+
+---
+
+### Prompt Engineering Architecture
+
+The project uses **external prompt files** for the main intent extraction template and **inline prompts** for everything else.
+
+| Prompt | Location | Input | Output Format | Model |
+|--------|----------|-------|---------------|-------|
+| Contact Center Intent Map | `contact_center_intent_prompt.txt` | Flattened page text | Markdown table: \| Intent Name \| User Goal \| Sample Phrases \| Source Context \| | `llama-3.3-70b-versatile` |
+| Batch Intent List | Inline in `dashboard.py` (`INTENT_EXTRACTION_PROMPT`) | Flattened page text | Plain numbered list of 10 intents | `llama-3.3-70b-versatile` |
+| RAG Synthesis | Inline in `main.py` | Top-3 ChromaDB chunks + user question | Free-form answer text | `llama-3.3-70b-versatile` |
+| Context Extraction (legacy) | Inline in `llm_processor.py` | Raw page text | Strict JSON with page_type, user_context, topic_analysis, intent_signals | `llama-3.3-70b-versatile` |
+| Content Analysis (legacy) | Inline in `llm_processor.py` | Context JSON + raw text | Strict JSON with primary_intent, user_goals, Q&A pairs, entities, topic_hierarchy | `llama-3.3-70b-versatile` |
+| Intent Clustering | Inline in `dashboard.py` | Flattened list of all intents | Markdown frequency table | `llama-3.3-70b-versatile` |
+
+**Prompt chaining:** The legacy two-step pipeline (`extract_page_context` → `analyze_content`) chains LLM calls: Step 1 produces a JSON context object that is serialized and fed into Step 2's prompt as context. This is currently unused in the active flow (the contact center prompt is a single-shot call).
+
+**JSON schema enforcement:** All legacy prompts include explicit JSON schemas in the prompt text and set `temperature=0.3` to reduce hallucination. The active contact center prompt uses a markdown table schema instead.
+
+---
+
+### Error Handling Patterns
+
+The codebase uses a consistent but basic error handling strategy:
+
+1. **Defensive JSON parsing** — Every `json.loads()` is wrapped in `try/except json.JSONDecodeError`. On failure, the method returns `None` and logs an error. Callers check `if result:` before using it.
+2. **Silent failure on storage** — ChromaDB upsert failures in `main.py` are caught and shown as `st.warning()` but do not stop the pipeline. JSON save failures are unhandled (will raise).
+3. **No retry logic** — API calls in `llm_processor.py` have no retry, backoff, or timeout handling. A single Groq failure returns `None` and bubbles up as a generic Streamlit error.
+4. **Graceful degradation on missing methods** — `IntentGenerator.detect_intent_collisions` calls `self.llm_processor.analyze_intent_similarity()`, which does not exist. This would raise `AttributeError` if that code path were ever executed, but the dashboard batch flow bypasses collision detection entirely.
+5. **Session state guards** — Keys are initialized with `if 'key' not in st.session_state` blocks before use to avoid `KeyError`.
+
+---
+
+### Rate Limiting & Async
+
+The only async code in the project is in `dashboard.py`:
+
+- `async_generate_intent()` uses `asyncio.run_in_executor(None, call_llm_for_intents, ...)` to run the blocking Groq call in a thread pool.
+- After each call, it `await asyncio.sleep(6)` to respect Groq rate limits.
+- The outer `dashboard_route()` creates a new event loop with `asyncio.new_event_loop()`, queues up to 5 tasks, and runs them with `asyncio.as_completed()`.
+- There is no actual parallelism — the sleep serializes execution. It is a cooperative throttle, not true concurrent batching.
+
+---
 
 ### Key Design Decisions
 
@@ -96,8 +279,9 @@ This demonstrates a minimal but complete RAG pipeline with no external vector DB
 - **Local Embeddings + Cloud LLM** — Embedding is done locally for free; heavy inference is offloaded to Groq.
 - **Dual Persistence** — Every scraped page is saved both as a local JSON artifact and as a ChromaDB vector entry. This makes the pipeline debuggable.
 - **Prompt-Driven Schema** — The LLM is expected to return strict JSON or markdown tables. Prompt templates are stored in external files (`contact_center_intent_prompt.txt`) for easier tuning.
-- **Session-State-Driven UI** — Streamlit's `st.session_state` is used heavily to pass data between steps.
+- **Session-State-Driven UI** — Streamlit's `st.session_state` is used heavily to pass data between steps. There is no backend API or database session layer.
 - **URLs as ChromaDB IDs** — Simple deduplication by upsert, but no versioning.
+- **No configuration abstraction** — All behavior (model names, collection names, rate-limit sleeps, max crawl pages) is hardcoded in source files. The `.env` file is only used for `GROQ_API_KEY`.
 
 ---
 
